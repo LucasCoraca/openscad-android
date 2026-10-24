@@ -1,0 +1,31 @@
+diff -ruN gl4es-orig/include/gl4esinit.h gl4es-1.1.6/include/gl4esinit.h
+--- gl4es-orig/include/gl4esinit.h	2026-10-24 19:20:26.595070205 -0300
++++ gl4es-1.1.6/include/gl4esinit.h	2026-10-24 19:20:36.330478363 -0300
+@@ -22,6 +22,8 @@
+ void initialize_gl4es(void);
+ // do this to uninitialize GL4ES if init constructors are disabled.
+ void close_gl4es(void);
++// make `fbo` what framebuffer 0 means (embedding in a toolkit that renders into its own FBO); call each frame
++void gl4es_setDefaultFramebuffer(unsigned int fbo, int width, int height);
+ // wrapped GetProcAddress
+ void* APIENTRY_GL4ES gl4es_GetProcAddress(const char *name);
+ 
+diff -ruN gl4es-orig/src/gl/framebuffers.c gl4es-1.1.6/src/gl/framebuffers.c
+--- gl4es-orig/src/gl/framebuffers.c	2026-10-24 19:20:26.651753962 -0300
++++ gl4es-1.1.6/src/gl/framebuffers.c	2026-10-24 19:20:36.247356909 -0300
+@@ -1814,3 +1814,15 @@
+ AliasExport(void,glClearNamedFramebufferuiv,EXT,(GLuint framebuffer, GLenum buffer, GLint drawbuffer, const GLuint *value));
+ AliasExport(void,glClearNamedFramebufferfv,EXT,(GLuint framebuffer, GLenum buffer, GLint drawbuffer, const GLfloat *value));
+ AliasExport(void,glClearNamedFramebufferfi,EXT,(GLuint framebuffer, GLenum buffer, GLint drawbuffer, GLfloat depth, GLint stencil));
++
++// Embedding in a toolkit that renders into its own FBO (Qt's QOpenGLWidget on Android): make `fbo` the framebuffer
++// that "framebuffer 0" means, and mark it bound, at the start of every frame the toolkit hands over.
++EXPORT
++void gl4es_setDefaultFramebuffer(GLuint fbo, int width, int height) {
++    if(!glstate) return;
++    glstate->fbo.mainfbo_fbo = fbo;
++    glstate->fbo.mainfbo_width = width;
++    glstate->fbo.mainfbo_height = height;
++    glstate->fbo.fbo_read = glstate->fbo.fbo_draw = glstate->fbo.current_fb = glstate->fbo.fbo_0;
++    glstate->fbo.internal = 0;
++}

@@ -1,0 +1,486 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 522d670..1fdd2c0 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -35,6 +35,23 @@ configure_file(
+   @ONLY
+ )
+ 
++# Android: OpenSCAD's GUI on Qt for Android, packaged by the app in OPENSCAD_ANDROID_DIR (github.com/LucasCoraca/openscad-android).
++# Legacy OpenGL runs on GLES through gl4es; no DBus, X11, EGL offscreen, tests or mimalloc.
++# (ANDROID itself is only set by project(), after the options: test the ABI given to the toolchain.)
++if(ANDROID_ABI)
++  set(ENABLE_TESTS OFF CACHE BOOL "")
++  set(USE_MIMALLOC OFF CACHE BOOL "")
++  set(ENABLE_QTDBUS OFF CACHE BOOL "")
++  set(ENABLE_EGL OFF CACHE BOOL "")
++  set(ENABLE_GLX OFF CACHE BOOL "")
++  set(USE_GLAD ON CACHE BOOL "")
++  set(USE_BUILTIN_OPENCSG ON CACHE BOOL "")
++  set(USE_CCACHE OFF CACHE BOOL "")
++  set(ENABLE_SPNAV OFF CACHE STRING "")
++  set(ENABLE_HIDAPI OFF CACHE STRING "")
++  set(ENABLE_CAIRO OFF CACHE STRING "")
++  set(ENABLE_GAMEPAD OFF CACHE STRING "")
++endif()
+ option(INFO "Display build configuration info at end of cmake config" ON)
+ option(ENABLE_TESTS "Run testsuite after building." ON)
+ option(ENABLE_GUI_TESTS "Compile a special version of the openscad gui with feature for testing." OFF)
+@@ -490,12 +507,26 @@ macro(find_graphics)
+       set(GLEW_SOURCES src/glview/glew-utils.cc)
+     endif()
+ 
++    if(ANDROID)
++      find_library(GL4ES_LIBRARY gl4es REQUIRED)
++      find_path(GL4ES_INCLUDE_DIR gl4es/gl4esinit.h REQUIRED)
++      target_include_directories(OpenSCADLibInternal SYSTEM PUBLIC ${GL4ES_INCLUDE_DIR})
++      # GLAD before Qt's GLES headers in every C++ file (see gl-android-prefix.h)
++      target_compile_options(OpenSCADLibInternal PUBLIC
++        "$<$<COMPILE_LANGUAGE:CXX>:SHELL:-include ${CMAKE_SOURCE_DIR}/src/glview/gl-android-prefix.h>")
++      find_library(GLU_LIBRARY GLU REQUIRED)
++      target_link_libraries(OpenSCADLibInternal PUBLIC ${GLU_LIBRARY} ${GL4ES_LIBRARY} GLESv2 EGL ${CMAKE_DL_LIBS})
++      set(OpenGL_FOUND ON)
++    else()
+     find_package(OpenGL QUIET COMPONENTS OpenGL)
++    endif()
+     if (NOT (OpenGL_FOUND OR OpenGL_OpenGL_FOUND))
+       message(FATAL_ERROR "OpenGL not found")
+     endif()
++    if(NOT ANDROID)
+     target_link_libraries(OpenSCADLibInternal PUBLIC ${OPENGL_LIBRARIES})
+     message(STATUS "OpenGL: ${OPENGL_LIBRARIES}")
++    endif()
+   endif()
+ endmacro(find_graphics)
+ 
+@@ -853,7 +884,11 @@ if(NOT HEADLESS)
+     message(FATAL_ERROR "Qt5Gamepad is not available when using Qt6. Set ENABLE_GAMEPAD to OFF or AUTO.")
+   endif()
+ 
++  if(ANDROID)
++    find_package(Qt6 COMPONENTS Core Widgets OpenGL OpenGLWidgets Concurrent Network Svg REQUIRED QUIET)
++  else()
+   find_package(Qt6 COMPONENTS Core Core5Compat Widgets Multimedia OpenGL OpenGLWidgets Concurrent Network Svg ${QT_TEST_IF_ANY} REQUIRED QUIET)
++  endif()
+     message(STATUS "Qt6: ${Qt6_VERSION}")
+ 
+     if (Qt6_POSITION_INDEPENDENT_CODE)
+@@ -978,6 +1013,13 @@ if(APPLE)
+   endif()
+   find_library(COCOA_LIBRARY Cocoa)
+   target_link_libraries(OpenSCADLibInternal PUBLIC ${COCOA_LIBRARY})
++elseif(ANDROID)
++  target_compile_definitions(OpenSCADLibInternal PUBLIC OPENSCAD_OS="Android")
++  set(PLATFORM_SOURCES src/io/imageutils-lodepng.cc src/platform/PlatformUtils-posix.cc
++      src/glview/OffscreenContextAndroid.cc src/glview/gl4es-android.cc)
++  list(APPEND OFFSCREEN_METHODS "android")
++  find_library(INTL_LIBRARY intl REQUIRED)  # bionic has no gettext: libintl-lite from openscad-android
++  target_link_libraries(OpenSCADLibInternal PUBLIC ${INTL_LIBRARY} android log)
+ elseif(UNIX)
+   target_compile_definitions(OpenSCADLibInternal PUBLIC OPENSCAD_OS="Unix")
+   set(PLATFORM_SOURCES src/io/imageutils-lodepng.cc src/platform/PlatformUtils-posix.cc)
+@@ -1685,10 +1727,15 @@ endif()
+ 
+ if (USE_QT6)
+   if(NOT HEADLESS)
++    if(ANDROID)
++      target_link_libraries(OpenSCADLibInternal PUBLIC
++        Qt6::Core Qt6::Widgets Qt6::OpenGL Qt6::OpenGLWidgets Qt6::Concurrent Qt6::Network Qt6::Svg ${QT6QSCINTILLA_LIBRARY})
++    else()
+     target_link_libraries(OpenSCADLibInternal PUBLIC
+       Qt6::Core Qt6::Core5Compat Qt6::Widgets Qt6::Multimedia Qt6::OpenGL Qt6::OpenGLWidgets Qt6::Concurrent Qt6::Network Qt6::Svg
+       ${QT6QSCINTILLA_LIBRARY} ${Qt6DBus_LIBRARIES} ${Qt6Gamepad_LIBRARIES}
+     )
++    endif()
+   endif()
+   if(ENABLE_GUI_TESTS)
+     target_link_libraries(OpenSCADLibInternal PUBLIC Qt6::Test)
+@@ -1874,3 +1921,12 @@ add_sanitizers(OpenSCADLibInternal)
+ if(INFO)
+   include("cmake/Modules/info.cmake")
+ endif()
++
++# Android: the APK (Qt's androiddeployqt) is built by the app project, from the same OpenSCADLibInternal and svg.
++if(ANDROID)
++  set_target_properties(OpenSCADExe PROPERTIES EXCLUDE_FROM_ALL ON)
++  set(OPENSCAD_ANDROID_DIR "" CACHE PATH "openscad-android checkout (its android/app builds the APK)")
++  if(OPENSCAD_ANDROID_DIR)
++    add_subdirectory("${OPENSCAD_ANDROID_DIR}/android/app" "${CMAKE_BINARY_DIR}/android-app")
++  endif()
++endif()
+diff --git a/src/glview/OffscreenContextAndroid.cc b/src/glview/OffscreenContextAndroid.cc
+new file mode 100644
+index 0000000..e0704a8
+--- /dev/null
++++ b/src/glview/OffscreenContextAndroid.cc
+@@ -0,0 +1,12 @@
++#include "glview/OffscreenContextAndroid.h"
++
++#include <cstddef>
++#include <memory>
++
++#include "utils/printutils.h"
++
++std::shared_ptr<OpenGLContext> CreateOffscreenContextAndroid(size_t width, size_t height)
++{
++  LOG(message_group::Warning, "Offscreen rendering (%1$dx%2$d) is not available on Android yet", width, height);
++  return nullptr;
++}
+diff --git a/src/glview/OffscreenContextAndroid.h b/src/glview/OffscreenContextAndroid.h
+new file mode 100644
+index 0000000..35a6bfa
+--- /dev/null
++++ b/src/glview/OffscreenContextAndroid.h
+@@ -0,0 +1,10 @@
++#pragma once
++
++#include <cstddef>
++#include <memory>
++
++#include "glview/OpenGLContext.h"
++
++// Android: offscreen rendering (image export, the command line) is not available yet; gl4es keeps one global GL
++// state, which belongs to the GUI's view.
++std::shared_ptr<OpenGLContext> CreateOffscreenContextAndroid(size_t width, size_t height);
+diff --git a/src/glview/OffscreenContextFactory.cc b/src/glview/OffscreenContextFactory.cc
+index d2bbd4b..411c97f 100644
+--- a/src/glview/OffscreenContextFactory.cc
++++ b/src/glview/OffscreenContextFactory.cc
+@@ -28,6 +28,9 @@
+ #ifdef NULLGL
+ #include "glview/OffscreenContextNULL.h"
+ #endif
++#ifdef __ANDROID__
++#include "glview/OffscreenContextAndroid.h"
++#endif
+ 
+ namespace OffscreenContextFactory {
+ 
+@@ -84,6 +87,11 @@ std::shared_ptr<OpenGLContext> create(const std::string& provider,
+                                      attrib.minorGLVersion);
+   }
+ #endif
++#ifdef __ANDROID__
++  if (provider == "android") {
++    return CreateOffscreenContextAndroid(attrib.width, attrib.height);
++  }
++#endif
+ #ifdef ENABLE_OSMESA
+   if (provider == "osmesa") {
+     return CreateOffscreenContextOSMesa(attrib.width, attrib.height, attrib.majorGLVersion,
+diff --git a/src/glview/gl-android-prefix.h b/src/glview/gl-android-prefix.h
+new file mode 100644
+index 0000000..f61e3d7
+--- /dev/null
++++ b/src/glview/gl-android-prefix.h
+@@ -0,0 +1,14 @@
++#pragma once
++
++// Android: included before every C++ source of OpenSCADLibInternal. OpenSCAD draws with desktop GL (GLAD, functions
++// from gl4es), while Qt's headers (QOpenGLWidget -> qopengl.h) bring in OpenGL ES ones. GLAD goes first, so its types
++// serve both and the GLES headers are skipped (GLAD defines __gl2_h_); Qt's GLES extension header is skipped too.
++// (No EGL headers after this: their prototypes clash with GLAD's too.)
++#include "glad/gl.h"
++#ifndef __gles2_gl2ext_h_
++#define __gles2_gl2ext_h_ 1
++#endif
++#include <QtGui/qopengl.h>
++// QOpenGLFunctions' GLES inline wrappers call ::gl* directly, which GLAD has made into macros; OpenSCAD doesn't use them
++#define QOPENGLFUNCTIONS_H
++#define QOPENGLEXTRAFUNCTIONS_H
+diff --git a/src/glview/gl4es-android.cc b/src/glview/gl4es-android.cc
+new file mode 100644
+index 0000000..cb60619
+--- /dev/null
++++ b/src/glview/gl4es-android.cc
+@@ -0,0 +1,55 @@
++#include "glview/gl4es-android.h"
++
++#include <dlfcn.h>
++#include <android/log.h>
++
++#include <gl4es/gl4esinit.h>
++
++namespace gl4es_android {
++
++namespace {
++
++bool initialized = false;
++int fbWidth = 0;
++int fbHeight = 0;
++
++// gl4es asks for the real GLES functions here (it is built with NOEGL: no context handling of its own)
++void *glesProc(const char *name)
++{
++  static void *gles = dlopen("libGLESv2.so", RTLD_NOW | RTLD_LOCAL);
++  // (EGL's header can't be included next to GLAD's, see gl-android-prefix.h)
++  using GetProc = void *(*)(const char *);
++  static auto eglGetProc = reinterpret_cast<GetProc>(dlsym(dlopen("libEGL.so", RTLD_NOW | RTLD_LOCAL), "eglGetProcAddress"));
++  void *p = gles ? dlsym(gles, name) : nullptr;
++  if (!p && eglGetProc) p = eglGetProc(name);
++  return p;
++}
++
++void mainFramebufferSize(int *width, int *height)
++{
++  *width = fbWidth;
++  *height = fbHeight;
++}
++
++}  // namespace
++
++void beginFrame(unsigned int fbo, int width, int height)
++{
++  fbWidth = width;
++  fbHeight = height;
++  if (!initialized) {
++    set_getprocaddress(glesProc);
++    set_getmainfbsize(mainFramebufferSize);
++    initialize_gl4es();
++    initialized = true;
++    __android_log_print(ANDROID_LOG_INFO, "openscad", "gl4es initialized on the view's GLES context");
++  }
++  gl4es_setDefaultFramebuffer(fbo, width, height);
++}
++
++Proc getProcAddress(const char *name)
++{
++  return reinterpret_cast<Proc>(gl4es_GetProcAddress(name));
++}
++
++}  // namespace gl4es_android
+diff --git a/src/glview/gl4es-android.h b/src/glview/gl4es-android.h
+new file mode 100644
+index 0000000..ec6848e
+--- /dev/null
++++ b/src/glview/gl4es-android.h
+@@ -0,0 +1,15 @@
++#pragma once
++
++// Android: OpenSCAD's renderers use legacy desktop OpenGL (fixed function, GLSL 1.20). gl4es emulates it on the
++// OpenGL ES context Qt created for the view; GLAD loads its functions from here.
++namespace gl4es_android {
++
++// Call with the GLES context current, before drawing: initializes gl4es on first use, and makes `fbo` (the FBO the
++// widget draws into) what framebuffer 0 means.
++void beginFrame(unsigned int fbo, int width, int height);
++
++// The desktop GL entry point `name`, as GLAD's loader expects it.
++using Proc = void (*)(void);
++Proc getProcAddress(const char *name);
++
++}  // namespace gl4es_android
+diff --git a/src/gui/LibraryInfoDialog.cc b/src/gui/LibraryInfoDialog.cc
+index 4b3cffc..c876c7f 100644
+--- a/src/gui/LibraryInfoDialog.cc
++++ b/src/gui/LibraryInfoDialog.cc
+@@ -2,7 +2,7 @@
+ #include "gui/LibraryInfoDialog.h"
+ 
+ #include <QString>
+-#include <QStringRef>
++#include <QStringView>
+ #include <QTextEdit>
+ 
+ #include "LibraryInfo.h"
+@@ -41,8 +41,8 @@ void LibraryInfoDialog::updateLibraryInfo(const QString& rendererInfo)
+       // handle property with multiple lines
+       auto endInd = info.indexOf(":", startIndex);
+       if (endInd != -1) {
+-        QStringRef lines(&info, startIndex, endInd - startIndex);
+-        auto lastIndex = lines.lastIndexOf("<br/>");
++        QStringView lines = QStringView(info).mid(startIndex, endInd - startIndex);
++        auto lastIndex = lines.lastIndexOf(u"<br/>");
+         startIndex = lastIndex != -1 ? lastIndex + startIndex : startIndex;
+       }
+     } else {
+diff --git a/src/gui/MainWindow.cc b/src/gui/MainWindow.cc
+index e7fbc66..ca6c239 100644
+--- a/src/gui/MainWindow.cc
++++ b/src/gui/MainWindow.cc
+@@ -59,7 +59,9 @@
+ #include <QScreen>
+ #include <QSettings>  //Include QSettings for direct operations on settings arrays
+ #include <QSignalMapper>
++#ifndef __ANDROID__
+ #include <QSoundEffect>
++#endif
+ #include <QSplitter>
+ #include <QStatusBar>
+ #include <QStringList>
+@@ -2080,7 +2082,9 @@ void MainWindow::actionRenderDone(const std::shared_ptr<const Geometry>& root_ge
+   const uint soundThreshold =
+     GlobalPreferences::inst()->getValue("advanced/timeThresholdOnRenderCompleteSound").toUInt();
+   if (renderSoundEnabled && soundThreshold <= renderStatistic.ms().count() / 1000) {
++#ifndef __ANDROID__
+     renderCompleteSoundEffect->play();
++#endif
+   }
+ 
+   renderedEditor = activeEditor;
+@@ -3510,8 +3514,10 @@ void MainWindow::setupWindow()
+  */
+ void MainWindow::setupCoreSubsystems()
+ {
++#ifndef __ANDROID__
+   renderCompleteSoundEffect = new QSoundEffect(this);
+   renderCompleteSoundEffect->setSource(QUrl("qrc:/sounds/complete.wav"));
++#endif
+ 
+   this->geometryWorker = new GeometryWorker();
+   connect(this->geometryWorker, &GeometryWorker::done, this, &MainWindow::actionRenderDone);
+diff --git a/src/gui/MainWindow.h b/src/gui/MainWindow.h
+index d465eef..8d28d36 100644
+--- a/src/gui/MainWindow.h
++++ b/src/gui/MainWindow.h
+@@ -18,7 +18,9 @@
+ #include <QPoint>
+ #include <QShortcut>
+ #include <QSignalMapper>
++#ifndef __ANDROID__
+ #include <QSoundEffect>
++#endif
+ #include <QString>
+ #include <QStringList>
+ #include <QTime>
+@@ -475,7 +477,9 @@ private:
+   ExportPdfPaperOrientation orientationsString2Enum(const QString& current);
+ 
+   QMenu *navigationMenu{nullptr};
++#ifndef __ANDROID__
+   QSoundEffect *renderCompleteSoundEffect;
++#endif
+ 
+   void resetMeasurementsState(bool enable, const QString& tooltipMessage);
+   QActionGroup *measurementGroup;
+diff --git a/src/gui/Network.h b/src/gui/Network.h
+index e8ebbfd..288df80 100644
+--- a/src/gui/Network.h
++++ b/src/gui/Network.h
+@@ -31,8 +31,10 @@
+ #include <QNetworkReply>
+ #include <QNetworkRequest>
+ #include <QObject>
++#if QT_CONFIG(ssl)
+ #include <QSslConfiguration>
+ #include <QSslSocket>
++#endif
+ #include <QString>
+ #include <QTimer>
+ #include <QtNetwork>
+@@ -121,6 +123,7 @@ ResultType NetworkRequest<ResultType>::execute(const NetworkRequest::setup_func_
+                     QString::fromStdString(PlatformUtils::user_agent()));
+   setup_func(request);
+ 
++#if QT_CONFIG(ssl)  // not in Qt builds without TLS (Android)
+   const auto caCertPath = QString::fromStdString(Settings::Settings::caCertPath.value());
+   const auto tlsSkipVerify = Settings::Settings::tlsSkipVerify.value();
+   if (!caCertPath.isEmpty() || tlsSkipVerify) {
+@@ -134,6 +137,7 @@ ResultType NetworkRequest<ResultType>::execute(const NetworkRequest::setup_func_
+     }
+     request.setSslConfiguration(sslConfig);
+   }
++#endif
+ 
+   QNetworkAccessManager nam;
+   QNetworkReply *reply = reply_func(nam, request);
+diff --git a/src/gui/QGLView.cc b/src/gui/QGLView.cc
+index f41d62d..b79907b 100644
+--- a/src/gui/QGLView.cc
++++ b/src/gui/QGLView.cc
+@@ -58,6 +58,9 @@
+ #include <QErrorMessage>
+ #ifdef USE_GLAD
+ #include <QOpenGLContext>
++#ifdef __ANDROID__
++#include "glview/gl4es-android.h"
++#endif
+ #endif
+ #include "gui/OpenCSGWarningDialog.h"
+ 
+@@ -78,8 +81,12 @@ namespace {
+ QSurfaceFormat compatibleWidgetFormat()
+ {
+   auto format = QSurfaceFormat::defaultFormat();
++#ifdef __ANDROID__
++  format.setRenderableType(QSurfaceFormat::OpenGLES);  // desktop GL comes from gl4es
++#else
+   format.setRenderableType(QSurfaceFormat::OpenGL);
+   format.setProfile(QSurfaceFormat::CompatibilityProfile);
++#endif
+   if (format.depthBufferSize() < 24) format.setDepthBufferSize(24);
+   if (format.stencilBufferSize() < 8) format.setStencilBufferSize(8);
+   return format;
+@@ -130,7 +137,14 @@ void QGLView::initializeGL()
+   // ..in a separate compilation unit to avoid duplicate symbols with x.
+   initializeGlew();
+ #endif
+-#ifdef USE_GLAD
++#ifdef __ANDROID__
++  gl4es_android::beginFrame(defaultFramebufferObject(), width() * devicePixelRatio(), height() * devicePixelRatio());
++  const auto version = gladLoadGL(gl4es_android::getProcAddress);
++  if (version == 0) {
++    std::cerr << "Unable to init GLAD on gl4es" << std::endl;
++    return;
++  }
++#elif defined(USE_GLAD)
+   // We could ask for gladLoadGLES2UserPtr() here if we want to use GLES2+
+   const auto version = gladLoadGLUserPtr(
+     [](void *ctx, const char *name) -> GLADapiproc {
+@@ -209,12 +223,19 @@ void QGLView::display_opencsg_warning_dialog()
+ 
+ void QGLView::resizeGL(int w, int h)
+ {
++#ifdef __ANDROID__
++  gl4es_android::beginFrame(defaultFramebufferObject(), w * devicePixelRatio(), h * devicePixelRatio());
++#endif
+   GLView::resizeGL(w, h);
+   emit resized();
+ }
+ 
+ void QGLView::paintGL()
+ {
++#ifdef __ANDROID__
++  // QOpenGLWidget draws into its own FBO, bound behind gl4es' back: that FBO is our framebuffer 0
++  gl4es_android::beginFrame(defaultFramebufferObject(), width() * devicePixelRatio(), height() * devicePixelRatio());
++#endif
+   GLView::paintGL();
+ 
+   if (statusLabel) {
+diff --git a/src/openscad.cc b/src/openscad.cc
+index 494c026..15a7bc5 100644
+--- a/src/openscad.cc
++++ b/src/openscad.cc
+@@ -819,7 +819,11 @@ int openscad_main(int argc, char **argv)
+   PlatformUtils::ensureStdIO();
+ #endif
+ 
+-#ifndef __EMSCRIPTEN__
++#ifdef __ANDROID__
++  // The process is app_process; the Android app unpacks share/openscad next to this (see openscad-android).
++  const char *android_app_path = getenv("OPENSCAD_APP_PATH");
++  const std::string applicationPath = android_app_path ? android_app_path : ".";
++#elif !defined(__EMSCRIPTEN__)
+   const auto applicationPath =
+     weakly_canonical(boost::dll::program_location()).parent_path().generic_string();
+ #else
+diff --git a/src/openscad_gui.cc b/src/openscad_gui.cc
+index 9a7097c..4656169 100644
+--- a/src/openscad_gui.cc
++++ b/src/openscad_gui.cc
+@@ -113,7 +113,14 @@ bool isDarkMode()
+ 
+ void configureOpenGLContext()
+ {
+-#if defined(Q_OS_UNIX) && !defined(Q_OS_MACOS)
++#if defined(Q_OS_ANDROID)
++  // Android has only OpenGL ES: the legacy OpenGL OpenSCAD uses is emulated on it by gl4es (glview/gl4es-android.cc).
++  auto format = QSurfaceFormat::defaultFormat();
++  format.setRenderableType(QSurfaceFormat::OpenGLES);
++  if (format.depthBufferSize() < 24) format.setDepthBufferSize(24);
++  if (format.stencilBufferSize() < 8) format.setStencilBufferSize(8);
++  QSurfaceFormat::setDefaultFormat(format);
++#elif defined(Q_OS_UNIX) && !defined(Q_OS_MACOS)
+   // OpenSCAD still relies on legacy OpenGL compatibility features and GLSL 1.20
+   // shaders, so a GLES context is not currently usable. On Wayland/EGL setups Qt
+   // can otherwise pick OpenGL ES by default.
