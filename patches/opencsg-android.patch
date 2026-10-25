@@ -1,0 +1,14 @@
+diff --git a/src/renderSCS.cpp b/src/renderSCS.cpp
+index 6902a9e..b890370 100644
+--- a/src/renderSCS.cpp
++++ b/src/renderSCS.cpp
+@@ -785,6 +785,9 @@ namespace OpenCSG {
+         glStencilMask(OpenGL::stencilMask);
+         glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+         glClearDepth(0.0);      // near clipping plane! essential for algorithm!
++        // the channels must start out empty: the clear color is the application's again after the first call (the
++        // attribute stack restores it), and the IDs are told apart from 0
++        glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+         glClearDepth(1.0);
+ 

@@ -251,10 +251,10 @@ index 0000000..cb60619
 +}  // namespace gl4es_android
 diff --git a/src/glview/gl4es-android.h b/src/glview/gl4es-android.h
 new file mode 100644
-index 0000000..ec6848e
+index 0000000..0a24a57
 --- /dev/null
 +++ b/src/glview/gl4es-android.h
-@@ -0,0 +1,15 @@
+@@ -0,0 +1,16 @@
 +#pragma once
 +
 +// Android: OpenSCAD's renderers use legacy desktop OpenGL (fixed function, GLSL 1.20). gl4es emulates it on the
@@ -268,6 +268,7 @@ index 0000000..ec6848e
 +// The desktop GL entry point `name`, as GLAD's loader expects it.
 +using Proc = void (*)(void);
 +Proc getProcAddress(const char *name);
++
 +
 +}  // namespace gl4es_android
 diff --git a/src/glview/opencsg_init.cpp b/src/glview/opencsg_init.cpp
@@ -297,6 +298,32 @@ index b02f348..2a2725f 100644
    sHaveOpenGLFunctions = true;
  }
  
+diff --git a/src/glview/preview/OpenCSGRenderer.cc b/src/glview/preview/OpenCSGRenderer.cc
+index 10fc7c4..be6ba3f 100644
+--- a/src/glview/preview/OpenCSGRenderer.cc
++++ b/src/glview/preview/OpenCSGRenderer.cc
+@@ -125,8 +125,21 @@ void OpenCSGRenderer::draw(bool showedges, const ShaderUtils::ShaderInfo *shader
+   for (const auto& product : vertex_state_containers_) {
+     if (product->primitives().size() > 1) {
+ #if OPENCSG_VERSION >= 0x0180
++#ifdef __ANDROID__
++      // OpenCSG's fixed function paths (texture combiners, alpha test, texgen) don't survive gl4es' emulation: with a
++      // vertex shader it uses its GLSL programs instead. OpenCSG passes its primitive IDs (and the color that resets
++      // them) as glColor, so the shader must forward gl_Color, which OpenCSG.vert doesn't (the color was undefined).
++      static const std::string opencsgVertexShader =
++        "#version 110\n"
++        "void main() {\n"
++        "  gl_Position = gl_ModelViewProjectionMatrix * gl_Vertex;\n"
++        "  gl_FrontColor = gl_Color;\n"
++        "}\n";
++      OpenCSG::setVertexShader(opencsgVertexShader);
++#else
+       if (enable_shader) OpenCSG::setVertexShader(opencsg_vertex_shader_code_);
+       else OpenCSG::setVertexShader({});
++#endif
+ #endif
+       GL_CHECKD(OpenCSG::render(product->primitives()));
+       GL_TRACE0("glDepthFunc(GL_EQUAL)");
 diff --git a/src/gui/LibraryInfoDialog.cc b/src/gui/LibraryInfoDialog.cc
 index 4b3cffc..c876c7f 100644
 --- a/src/gui/LibraryInfoDialog.cc
@@ -322,7 +349,7 @@ index 4b3cffc..c876c7f 100644
        }
      } else {
 diff --git a/src/gui/MainWindow.cc b/src/gui/MainWindow.cc
-index e7fbc66..ca6c239 100644
+index e7fbc66..efb8c38 100644
 --- a/src/gui/MainWindow.cc
 +++ b/src/gui/MainWindow.cc
 @@ -59,7 +59,9 @@
@@ -345,7 +372,19 @@ index e7fbc66..ca6c239 100644
    }
  
    renderedEditor = activeEditor;
-@@ -3510,8 +3514,10 @@ void MainWindow::setupWindow()
+@@ -3435,6 +3439,11 @@ void MainWindow::openCSGSettingsChanged()
+                      GlobalPreferences::inst()->getValue("advanced/forceGoldfeather").toBool()
+                        ? OpenCSG::Goldfeather
+                        : OpenCSG::Automatic);
++#ifdef __ANDROID__
++  // gl4es has no real occlusion queries (they always report 0 samples), which OpenCSG would use to count depth
++  // complexity: it then stopped before subtracting anything
++  OpenCSG::setOption(OpenCSG::DepthComplexitySetting, OpenCSG::NoDepthComplexitySampling);
++#endif
+ #endif
+ }
+ 
+@@ -3510,8 +3519,10 @@ void MainWindow::setupWindow()
   */
  void MainWindow::setupCoreSubsystems()
  {
@@ -774,3 +813,9 @@ index 29cab4c..13c5a50 100644
    set_source_files_properties(
      submodules/OpenCSG/src/context.cpp
      PROPERTIES COMPILE_DEFINITIONS "ensureFunctionPointers=ensureFunctionPointers_unused"
+diff --git a/submodules/OpenCSG b/submodules/OpenCSG
+--- a/submodules/OpenCSG
++++ b/submodules/OpenCSG
+@@ -1 +1 @@
+-Subproject commit 9bf122715213dca05e70993dd8672fe3aa36c518
++Subproject commit 9bf122715213dca05e70993dd8672fe3aa36c518-dirty

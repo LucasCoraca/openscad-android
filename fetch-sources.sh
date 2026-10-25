@@ -50,5 +50,6 @@ if [ "$(git rev-parse --short HEAD)" != "$OPENSCAD_COMMIT" ] || [ -z "$(git stat
   git checkout -q "$OPENSCAD_COMMIT"
   git submodule update --init --recursive
   [ -s "$R/patches/openscad-android.patch" ] && git apply "$R/patches/openscad-android.patch"
+  [ -s "$R/patches/opencsg-android.patch" ] && git -C submodules/OpenCSG apply "$R/patches/opencsg-android.patch"
 fi
 echo "sources ready"

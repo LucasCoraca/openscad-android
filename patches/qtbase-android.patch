@@ -14,11 +14,283 @@ index 461b2da..8c55e5e 100644
          QWindowSystemInterface::TouchPoint touchPoint;
          // Start numbering touch points from 1
          touchPoint.id = id + 1;
+diff --git a/src/plugins/platforms/android/qandroidinputcontext.cpp b/src/plugins/platforms/android/qandroidinputcontext.cpp
+index 2474216..c3fee12 100644
+--- a/src/plugins/platforms/android/qandroidinputcontext.cpp
++++ b/src/plugins/platforms/android/qandroidinputcontext.cpp
+@@ -22,6 +22,9 @@
+ #include <qinputmethod.h>
+ #include <qsharedpointer.h>
+ #include <qthread.h>
++#include <QSemaphore>
++#include <memory>
++#include <optional>
+ #include <qwindow.h>
+ #include <qpa/qplatformwindow.h>
+ 
+@@ -67,12 +70,32 @@ static jfieldID m_selectionStartFieldID = 0;
+ static jfieldID m_startOffsetFieldID = 0;
+ static jfieldID m_textFieldID = 0;
+ 
+-static void runOnQtThread(const std::function<void()> &func)
++// openscad-android: the input method calls these on Android's UI thread, and they used to block until Qt's thread
++// answered. While Qt's thread is busy (an application computing something on it for seconds), Android's UI thread
++// froze: "isn't responding" dialogs, dropped input. Now a call waits a short while at most: an edit is still applied,
++// in order, when Qt gets to it (and reported as done), a query reports that its answer isn't available.
++static constexpr int kQtCallTimeoutMs = 250;
++
++template <typename T, typename F>
++static std::optional<T> qtCall(F f)
+ {
+     AndroidDeadlockProtector protector;
+     if (!protector.acquire())
+-        return;
+-    QMetaObject::invokeMethod(m_androidInputContext, "safeCall", Qt::BlockingQueuedConnection, Q_ARG(std::function<void()>, func));
++        return std::nullopt;
++    struct State { QSemaphore done; T value{}; };
++    auto state = std::make_shared<State>();
++    QMetaObject::invokeMethod(m_androidInputContext, [state, f] { state->value = f(); state->done.release(); },
++                              Qt::QueuedConnection);
++    if (!state->done.tryAcquire(1, kQtCallTimeoutMs))
++        return std::nullopt;
++    return state->value;
++}
++
++// an edit: done, or queued and reported as done
++template <typename F>
++static jboolean qtEdit(F f)
++{
++    return qtCall<jboolean>([f] { return jboolean(f()); }).value_or(JNI_TRUE);
+ }
+ 
+ static jboolean beginBatchEdit(JNIEnv */*env*/, jobject /*thiz*/)
+@@ -81,8 +104,7 @@ static jboolean beginBatchEdit(JNIEnv */*env*/, jobject /*thiz*/)
+         return JNI_FALSE;
+ 
+     qCDebug(lcQpaInputMethods) << "@@@ BEGINBATCH";
+-    jboolean res = JNI_FALSE;
+-    runOnQtThread([&res]{res = m_androidInputContext->beginBatchEdit();});
++    jboolean res = qtEdit([=] { return m_androidInputContext->beginBatchEdit(); });
+     return res;
+ }
+ 
+@@ -93,8 +115,7 @@ static jboolean endBatchEdit(JNIEnv */*env*/, jobject /*thiz*/)
+ 
+     qCDebug(lcQpaInputMethods) << "@@@ ENDBATCH";
+ 
+-    jboolean res = JNI_FALSE;
+-    runOnQtThread([&res]{res = m_androidInputContext->endBatchEdit();});
++    jboolean res = qtEdit([=] { return m_androidInputContext->endBatchEdit(); });
+     return res;
+ }
+ 
+@@ -110,8 +131,7 @@ static jboolean commitText(JNIEnv *env, jobject /*thiz*/, jstring text, jint new
+     env->ReleaseStringChars(text, jstr);
+ 
+     qCDebug(lcQpaInputMethods) << "@@@ COMMIT" << str << newCursorPosition;
+-    jboolean res = JNI_FALSE;
+-    runOnQtThread([&]{res = m_androidInputContext->commitText(str, newCursorPosition);});
++    jboolean res = qtEdit([=] { return m_androidInputContext->commitText(str, newCursorPosition); });
+     return res;
+ }
+ 
+@@ -121,8 +141,7 @@ static jboolean deleteSurroundingText(JNIEnv */*env*/, jobject /*thiz*/, jint le
+         return JNI_FALSE;
+ 
+     qCDebug(lcQpaInputMethods) << "@@@ DELETE" << leftLength << rightLength;
+-    jboolean res = JNI_FALSE;
+-    runOnQtThread([&]{res = m_androidInputContext->deleteSurroundingText(leftLength, rightLength);});
++    jboolean res = qtEdit([=] { return m_androidInputContext->deleteSurroundingText(leftLength, rightLength); });
+     return res;
+ }
+ 
+@@ -132,8 +151,7 @@ static jboolean finishComposingText(JNIEnv */*env*/, jobject /*thiz*/)
+         return JNI_FALSE;
+ 
+     qCDebug(lcQpaInputMethods) << "@@@ FINISH";
+-    jboolean res = JNI_FALSE;
+-    runOnQtThread([&]{res = m_androidInputContext->finishComposingText();});
++    jboolean res = qtEdit([=] { return m_androidInputContext->finishComposingText(); });
+     return res;
+ }
+ 
+@@ -148,8 +166,7 @@ static jboolean replaceText(JNIEnv *env, jobject /*thiz*/, jint start, jint end,
+     env->ReleaseStringChars(text, jstr);
+ 
+     qCDebug(lcQpaInputMethods) << "@@@ REPLACE" << start << end << str << newCursorPosition;
+-    jboolean res = JNI_FALSE;
+-    runOnQtThread([&]{res = m_androidInputContext->replaceText(start, end, str, newCursorPosition);});
++    jboolean res = qtEdit([=] { return m_androidInputContext->replaceText(start, end, str, newCursorPosition); });
+ 
+     return res;
+ }
+@@ -159,9 +176,7 @@ static jint getCursorCapsMode(JNIEnv */*env*/, jobject /*thiz*/, jint reqModes)
+     if (!m_androidInputContext)
+         return 0;
+ 
+-    jint res = 0;
+-    runOnQtThread([&]{res = m_androidInputContext->getCursorCapsMode(reqModes);});
+-    return res;
++    return qtCall<jint>([=] { return m_androidInputContext->getCursorCapsMode(reqModes); }).value_or(0);
+ }
+ 
+ static jobject getExtractedText(JNIEnv *env, jobject /*thiz*/, int hintMaxChars, int hintMaxLines, jint flags)
+@@ -169,8 +184,11 @@ static jobject getExtractedText(JNIEnv *env, jobject /*thiz*/, int hintMaxChars,
+     if (!m_androidInputContext)
+         return 0;
+ 
+-    QAndroidInputContext::ExtractedText extractedText;
+-    runOnQtThread([&]{extractedText = m_androidInputContext->getExtractedText(hintMaxChars, hintMaxLines, flags);});
++    const auto answer = qtCall<QAndroidInputContext::ExtractedText>(
++        [=] { return m_androidInputContext->getExtractedText(hintMaxChars, hintMaxLines, flags); });
++    if (!answer)
++        return 0;  // not available now
++    const QAndroidInputContext::ExtractedText extractedText = *answer;
+ 
+     qCDebug(lcQpaInputMethods) << "@@@ GETEX" << hintMaxChars << hintMaxLines << QString::fromLatin1("0x") + QString::number(flags,16) << extractedText.text << "partOff:" << extractedText.partialStartOffset << extractedText.partialEndOffset << "sel:" << extractedText.selectionStart << extractedText.selectionEnd << "offset:" << extractedText.startOffset;
+ 
+@@ -193,8 +211,10 @@ static jstring getSelectedText(JNIEnv *env, jobject /*thiz*/, jint flags)
+     if (!m_androidInputContext)
+         return 0;
+ 
+-    QString text;
+-    runOnQtThread([&]{text = m_androidInputContext->getSelectedText(flags);});
++    const auto answer = qtCall<QString>([=] { return m_androidInputContext->getSelectedText(flags); });
++    if (!answer)
++        return 0;  // not available now
++    const QString text = *answer;
+     qCDebug(lcQpaInputMethods) << "@@@ GETSEL" << text;
+     if (text.isEmpty())
+         return 0;
+@@ -206,8 +226,10 @@ static jstring getTextAfterCursor(JNIEnv *env, jobject /*thiz*/, jint length, ji
+     if (!m_androidInputContext)
+         return 0;
+ 
+-    QString text;
+-    runOnQtThread([&]{text = m_androidInputContext->getTextAfterCursor(length, flags);});
++    const auto answer = qtCall<QString>([=] { return m_androidInputContext->getTextAfterCursor(length, flags); });
++    if (!answer)
++        return 0;  // not available now
++    const QString text = *answer;
+     qCDebug(lcQpaInputMethods) << "@@@ GETA" << length << text;
+     return env->NewString(reinterpret_cast<const jchar *>(text.constData()), jsize(text.length()));
+ }
+@@ -217,8 +239,10 @@ static jstring getTextBeforeCursor(JNIEnv *env, jobject /*thiz*/, jint length, j
+     if (!m_androidInputContext)
+         return 0;
+ 
+-    QString text;
+-    runOnQtThread([&]{text = m_androidInputContext->getTextBeforeCursor(length, flags);});
++    const auto answer = qtCall<QString>([=] { return m_androidInputContext->getTextBeforeCursor(length, flags); });
++    if (!answer)
++        return 0;  // not available now
++    const QString text = *answer;
+     qCDebug(lcQpaInputMethods) << "@@@ GETB" << length << text;
+     return env->NewString(reinterpret_cast<const jchar *>(text.constData()), jsize(text.length()));
+ }
+@@ -234,8 +258,7 @@ static jboolean setComposingText(JNIEnv *env, jobject /*thiz*/, jstring text, ji
+     env->ReleaseStringChars(text, jstr);
+ 
+     qCDebug(lcQpaInputMethods) << "@@@ SET" << str << newCursorPosition;
+-    jboolean res = JNI_FALSE;
+-    runOnQtThread([&]{res = m_androidInputContext->setComposingText(str, newCursorPosition);});
++    jboolean res = qtEdit([=] { return m_androidInputContext->setComposingText(str, newCursorPosition); });
+     return res;
+ }
+ 
+@@ -245,8 +268,7 @@ static jboolean setComposingRegion(JNIEnv */*env*/, jobject /*thiz*/, jint start
+         return JNI_FALSE;
+ 
+     qCDebug(lcQpaInputMethods) << "@@@ SETR" << start << end;
+-    jboolean res = JNI_FALSE;
+-    runOnQtThread([&]{res = m_androidInputContext->setComposingRegion(start, end);});
++    jboolean res = qtEdit([=] { return m_androidInputContext->setComposingRegion(start, end); });
+     return res;
+ }
+ 
+@@ -257,8 +279,7 @@ static jboolean setSelection(JNIEnv */*env*/, jobject /*thiz*/, jint start, jint
+         return JNI_FALSE;
+ 
+     qCDebug(lcQpaInputMethods) << "@@@ SETSEL" << start << end;
+-    jboolean res = JNI_FALSE;
+-    runOnQtThread([&]{res = m_androidInputContext->setSelection(start, end);});
++    jboolean res = qtEdit([=] { return m_androidInputContext->setSelection(start, end); });
+     return res;
+ 
+ }
+@@ -269,8 +290,7 @@ static jboolean selectAll(JNIEnv */*env*/, jobject /*thiz*/)
+         return JNI_FALSE;
+ 
+     qCDebug(lcQpaInputMethods) << "@@@ SELALL";
+-    jboolean res = JNI_FALSE;
+-    runOnQtThread([&]{res = m_androidInputContext->selectAll();});
++    jboolean res = qtEdit([=] { return m_androidInputContext->selectAll(); });
+     return res;
+ }
+ 
+@@ -280,8 +300,7 @@ static jboolean cut(JNIEnv */*env*/, jobject /*thiz*/)
+         return JNI_FALSE;
+ 
+     qCDebug(lcQpaInputMethods) << "@@@";
+-    jboolean res = JNI_FALSE;
+-    runOnQtThread([&]{res = m_androidInputContext->cut();});
++    jboolean res = qtEdit([=] { return m_androidInputContext->cut(); });
+     return res;
+ }
+ 
+@@ -291,8 +310,7 @@ static jboolean copy(JNIEnv */*env*/, jobject /*thiz*/)
+         return JNI_FALSE;
+ 
+     qCDebug(lcQpaInputMethods) << "@@@";
+-    jboolean res = JNI_FALSE;
+-    runOnQtThread([&]{res = m_androidInputContext->copy();});
++    jboolean res = qtEdit([=] { return m_androidInputContext->copy(); });
+     return res;
+ }
+ 
+@@ -302,8 +320,7 @@ static jboolean copyURL(JNIEnv */*env*/, jobject /*thiz*/)
+         return JNI_FALSE;
+ 
+     qCDebug(lcQpaInputMethods) << "@@@";
+-    jboolean res = JNI_FALSE;
+-    runOnQtThread([&]{res = m_androidInputContext->copyURL();});
++    jboolean res = qtEdit([=] { return m_androidInputContext->copyURL(); });
+     return res;
+ }
+ 
+@@ -313,8 +330,7 @@ static jboolean paste(JNIEnv */*env*/, jobject /*thiz*/)
+         return JNI_FALSE;
+ 
+     qCDebug(lcQpaInputMethods) << "@@@ PASTE";
+-    jboolean res = JNI_FALSE;
+-    runOnQtThread([&]{res = m_androidInputContext->paste();});
++    jboolean res = qtEdit([=] { return m_androidInputContext->paste(); });
+     return res;
+ }
+ 
+@@ -325,7 +341,7 @@ static jboolean updateCursorPosition(JNIEnv */*env*/, jobject /*thiz*/)
+ 
+     qCDebug(lcQpaInputMethods) << "@@@ UPDATECURSORPOS";
+ 
+-    runOnQtThread([&]{m_androidInputContext->updateCursorPosition();});
++    qtCall<bool>([] { m_androidInputContext->updateCursorPosition(); return true; });
+     return true;
+ }
+ 
+@@ -334,7 +350,7 @@ static void reportFullscreenMode(JNIEnv */*env*/, jobject /*thiz*/, jboolean ena
+     if (!m_androidInputContext)
+         return;
+ 
+-    runOnQtThread([&]{m_androidInputContext->reportFullscreenMode(enabled);});
++    qtCall<bool>([=] { m_androidInputContext->reportFullscreenMode(enabled); return true; });
+ }
+ 
+ static jboolean fullscreenMode(JNIEnv */*env*/, jobject /*thiz*/)
 diff --git a/src/plugins/platforms/android/qandroidplatformintegration.cpp b/src/plugins/platforms/android/qandroidplatformintegration.cpp
-index 6b546ea..535080c 100644
+index 6b546ea..47515a7 100644
 --- a/src/plugins/platforms/android/qandroidplatformintegration.cpp
 +++ b/src/plugins/platforms/android/qandroidplatformintegration.cpp
-@@ -339,12 +339,31 @@ bool QAndroidPlatformIntegration::hasCapability(Capability cap) const
+@@ -339,12 +339,32 @@ bool QAndroidPlatformIntegration::hasCapability(Capability cap) const
      }
  }
  
@@ -34,8 +306,9 @@ index 6b546ea..535080c 100644
 +    FlushResult rhiFlush(QWindow *window, qreal sourceDevicePixelRatio, const QRegion &region, const QPoint &offset,
 +                         QPlatformTextureList *textures, bool translucentBackground) override
 +    {
-+        Q_UNUSED(region);
-+        return QRhiBackingStore::rhiFlush(window, sourceDevicePixelRatio, QRegion(QRect(QPoint(), window->size())),
++        static const bool partial = qEnvironmentVariableIsSet("QT_ANDROID_PARTIAL_FLUSH");  // diagnostics
++        return QRhiBackingStore::rhiFlush(window, sourceDevicePixelRatio,
++                                          partial ? region : QRegion(QRect(QPoint(), window->size())),
 +                                          offset, textures, translucentBackground);
 +    }
 +};
@@ -52,7 +325,7 @@ index 6b546ea..535080c 100644
  
  QPlatformOpenGLContext *QAndroidPlatformIntegration::createPlatformOpenGLContext(QOpenGLContext *context) const
 diff --git a/src/plugins/platforms/android/qandroidplatformwindow.cpp b/src/plugins/platforms/android/qandroidplatformwindow.cpp
-index eb1fdab..9be4863 100644
+index eb1fdab..a16f64b 100644
 --- a/src/plugins/platforms/android/qandroidplatformwindow.cpp
 +++ b/src/plugins/platforms/android/qandroidplatformwindow.cpp
 @@ -180,8 +180,13 @@ void QAndroidPlatformWindow::setVisible(bool visible)
@@ -71,3 +344,67 @@ index eb1fdab..9be4863 100644
  }
  
  void QAndroidPlatformWindow::setWindowState(Qt::WindowStates state)
+@@ -271,11 +276,23 @@ void QAndroidPlatformWindow::updateFocusedEditText()
+     m_nativeQtWindow.callMethod<void>("updateFocusedEditText");
+ }
+ 
++static bool ignoreSurfaceForExpose()  // diagnostics
++{
++    static const bool ignore = qEnvironmentVariableIsSet("QT_ANDROID_EXPOSE_WITHOUT_SURFACE");
++    return ignore;
++}
++
+ bool QAndroidPlatformWindow::isExposed() const
+ {
++    // openscad-android: not while Android has destroyed the window's Surface (the Surface is created on the first
++    // render, so a window that never had one counts as exposed). Without a Surface every flush of the window tried to
++    // create a GL context and failed ("no EGLSurface", "Failed to create QRhi"), over and over, until Android gave it
++    // a new Surface; the emulator's GPU emulation leaked memory doing so.
++    const bool surfaceGone = m_surfaceCreated && !m_hasAndroidSurface.load();
+     return qApp->applicationState() > Qt::ApplicationHidden
+             && window()->isVisible()
+-            && !window()->geometry().isEmpty();
++            && !window()->geometry().isEmpty()
++            && (isEmbeddingContainer() || !surfaceGone || ignoreSurfaceForExpose());
+ }
+ 
+ void QAndroidPlatformWindow::applicationStateChanged(Qt::ApplicationState)
+@@ -318,8 +335,17 @@ void QAndroidPlatformWindow::onSurfaceChanged(QtJniTypes::Surface surface)
+     } else {
+         clearSurface();
+     }
++    const bool hadSurface = m_hasAndroidSurface.exchange(surfaceIsValid);
+ 
+     unlockSurface();
++
++    // the window became drawable, or stopped being so (see isExposed())
++    if (surfaceIsValid != hadSurface) {
++        if (surfaceIsValid)
++            sendExpose();
++        else
++            QWindowSystemInterface::handleExposeEvent(window(), QRegion());
++    }
+ }
+ 
+ void QAndroidPlatformWindow::sendExpose() const
+diff --git a/src/plugins/platforms/android/qandroidplatformwindow.h b/src/plugins/platforms/android/qandroidplatformwindow.h
+index c282adb..929ac7f 100644
+--- a/src/plugins/platforms/android/qandroidplatformwindow.h
++++ b/src/plugins/platforms/android/qandroidplatformwindow.h
+@@ -11,6 +11,7 @@
+ #include <QtCore/qjniobject.h>
+ #include <QtCore/qjnitypes.h>
+ #include <QtCore/qloggingcategory.h>
++#include <atomic>
+ #include <QtCore/qmutex.h>
+ #include <QtCore/qwaitcondition.h>
+ #include <jni.h>
+@@ -96,6 +97,8 @@ protected:
+     QtJniTypes::Surface m_androidSurfaceObject;
+     QWaitCondition m_surfaceWaitCondition;
+     bool m_surfaceCreated = false;
++    // openscad-android: whether Android has given this window a Surface to draw into (see isExposed())
++    std::atomic<bool> m_hasAndroidSurface = false;
+     QMutex m_surfaceMutex;
+     QMutex m_destructionMutex;
+ 

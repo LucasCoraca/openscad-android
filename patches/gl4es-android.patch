@@ -13,8 +13,8 @@ diff -ruN gl4es-orig/include/gl4esinit.h gl4es-1.1.6/include/gl4esinit.h
 Binary files gl4es-orig/lib/libGL.a and gl4es-1.1.6/lib/libGL.a differ
 diff -ruN gl4es-orig/src/gl/framebuffers.c gl4es-1.1.6/src/gl/framebuffers.c
 --- gl4es-orig/src/gl/framebuffers.c	2026-10-24 19:20:26.651753962 -0300
-+++ gl4es-1.1.6/src/gl/framebuffers.c	2026-10-24 21:36:16.601782626 -0300
-@@ -1814,3 +1814,15 @@
++++ gl4es-1.1.6/src/gl/framebuffers.c	2026-10-25 00:06:59.806495042 -0300
+@@ -1814,3 +1814,20 @@
  AliasExport(void,glClearNamedFramebufferuiv,EXT,(GLuint framebuffer, GLenum buffer, GLint drawbuffer, const GLuint *value));
  AliasExport(void,glClearNamedFramebufferfv,EXT,(GLuint framebuffer, GLenum buffer, GLint drawbuffer, const GLfloat *value));
  AliasExport(void,glClearNamedFramebufferfi,EXT,(GLuint framebuffer, GLenum buffer, GLint drawbuffer, GLfloat depth, GLint stencil));
@@ -29,6 +29,11 @@ diff -ruN gl4es-orig/src/gl/framebuffers.c gl4es-1.1.6/src/gl/framebuffers.c
 +    glstate->fbo.mainfbo_height = height;
 +    glstate->fbo.fbo_read = glstate->fbo.fbo_draw = glstate->fbo.current_fb = glstate->fbo.fbo_0;
 +    glstate->fbo.internal = 0;
++    // The toolkit binds textures (its FBO's, when it recreates it) behind our back: forget which textures we think
++    // are bound and which unit is active, so the next use binds for real instead of being skipped as redundant.
++    for (int i = 0; i < MAX_TEX; i++)
++        glstate->actual_tex2d[i] = 0xffffffffu;
++    glstate->gleshard->active = 0xffffffffu;
 +}
 diff -ruN gl4es-orig/src/gl/shaderconv.c gl4es-1.1.6/src/gl/shaderconv.c
 --- gl4es-orig/src/gl/shaderconv.c	2026-10-24 19:20:26.659484737 -0300
