@@ -14,6 +14,12 @@
 #include <QtWidgets/QAbstractScrollArea>
 #include <QtWidgets/QApplication>
 #include <QtWidgets/QDialog>
+#include <QtWidgets/QMainWindow>
+#include <QtWidgets/QScrollArea>
+#include <QtCore/QPointer>
+#include <QtCore/QTimer>
+#include <QtGui/QResizeEvent>
+#include <QtGui/QKeyEvent>
 #include <QtGui/QScreen>
 #include <QtWidgets/QProxyStyle>
 #include <QtWidgets/QStyleOption>
@@ -278,13 +284,80 @@ public:
   }
 };
 
-void installStyle()
+// Back on the main window (no menu or dialog open, keyboard hidden) closed the window, and with it OpenSCAD, which is
+// easy to do by accident right after the keyboard went away: send the app to the background instead, as Home does.
+class BackKeyToBackground : public QObject
+{
+public:
+  using QObject::QObject;
+  bool eventFilter(QObject *watched, QEvent *event) override
+  {
+    if ((event->type() != QEvent::KeyPress && event->type() != QEvent::KeyRelease) ||
+        static_cast<QKeyEvent *>(event)->key() != Qt::Key_Back || !watched->isWindowType())
+      return false;
+    if (QApplication::activePopupWidget() || QApplication::activeModalWidget() ||
+        !qobject_cast<QMainWindow *>(QApplication::activeWindow()))
+      return false;
+    if (event->type() == QEvent::KeyRelease) {
+      QJniObject activity = QNativeInterface::QAndroidApplication::context();
+      activity.callMethod<jboolean>("moveTaskToBack", "(Z)Z", jboolean(true));
+    }
+    return true;
+  }
+};
+
+// The keyboard shrinks the window (adjustResize) and growing back gave all the space to the 3D view, so the docks
+// shrank every time the keyboard went away, and a field low in a dock (Color List filter) ended up out of sight.
+// Application filters see the resize before the layout does: remember the dock layout from before the keyboard and
+// put it back when the window returns to that size; while shrunk, scroll the focused field into view.
+class KeyboardResizeKeeper : public QObject
+{
+public:
+  using QObject::QObject;
+  bool eventFilter(QObject *watched, QEvent *event) override
+  {
+    auto *window = qobject_cast<QMainWindow *>(watched);
+    if (!window || event->type() != QEvent::Resize) return false;
+    const auto *resize = static_cast<QResizeEvent *>(event);
+    const QSize oldSize = resize->oldSize(), size = resize->size();
+    if (oldSize.width() == size.width() && size.height() < oldSize.height()) {
+      if (window->property("keyboardSavedSize").toSize() != oldSize) {
+        window->setProperty("keyboardSavedState", window->saveState());
+        window->setProperty("keyboardSavedSize", oldSize);
+      }
+      QTimer::singleShot(0, window, [] { ensureFocusVisible(); });
+    } else if (size == window->property("keyboardSavedSize").toSize()) {
+      const QByteArray state = window->property("keyboardSavedState").toByteArray();
+      window->setProperty("keyboardSavedSize", QVariant());
+      QTimer::singleShot(0, window, [window = QPointer<QMainWindow>(window), state] {
+        if (window) window->restoreState(state);
+      });
+    }
+    return false;
+  }
+
+private:
+  static void ensureFocusVisible()
+  {
+    QWidget *focus = QApplication::focusWidget();
+    for (QWidget *w = focus ? focus->parentWidget() : nullptr; w; w = w->parentWidget()) {
+      if (auto *area = qobject_cast<QScrollArea *>(w)) {
+        area->ensureWidgetVisible(focus);
+        return;
+      }
+    }
+  }
+};
+
+void installAndroidAdjustments()
 {
   if (!qobject_cast<QApplication *>(QCoreApplication::instance())) return;
   QApplication::setStyle(new AndroidStyle);
   qApp->installEventFilter(new FitDialogsToScreen(qApp));
+  qApp->installEventFilter(new BackKeyToBackground(qApp));
+  qApp->installEventFilter(new KeyboardResizeKeeper(qApp));
 }
-Q_COREAPP_STARTUP_FUNCTION(installStyle)
+Q_COREAPP_STARTUP_FUNCTION(installAndroidAdjustments)
 
 int main(int argc, char **argv)
 {

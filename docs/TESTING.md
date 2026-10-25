@@ -52,14 +52,14 @@ Emulator: tablet 1600×1000, density 240 (rounded to device pixel ratio 2), x86_
 | ✅ | Library Info | dialogs are now kept inside the space above the taskbar |
 | ✅ | Menu item widths | labels were elided ("Para…tric"): Fusion metrics vs 72-dpi Android; fixed by a proxy style |
 | ✅ | About (scrolls), Cheat Sheet (opens the browser) | |
-| ⏳ | Font List | |
+| ✅ | Font List (system fonts via fontconfig), Color List (filter, tabs) | a docked tab opened from the Window menu is not raised (as upstream) |
 | ✅ | Customizer: combo, spin box, slider, checkbox, auto preview, presets (+, -, select), detail modes, scrolling | editable preset combo has small rows; Android text handle lingers after the keyboard closes |
-| ⏳ | Animate | |
+| ✅ | Animate: FPS/steps, play/pause, step, rewind | number fields get the full keyboard |
 | ✅ | Export STL through the system file picker | content:// documents via a local copy |
 | ⏳ | Export: 3MF, OFF, AMF, DXF, SVG, PDF, PNG, CSG | |
 | ✅ | Save As, Save (writes back to the document), Open (file picker) | |
 | ✅ | Close the last tab | leaves an empty design (closing the window quit the app) |
-| ⏳ | Window menu: docks, hide/show editor/console | |
+| ✅ | Window menu: docks; splitter drag | dock sizes now survive the keyboard; the focused field is scrolled into view |
 | ✅ | Console | |
 | ✅ | Error log | backups folder was missing (fixed) |
 
@@ -71,3 +71,5 @@ Emulator: tablet 1600×1000, density 240 (rounded to device pixel ratio 2), x86_
 | ⏳ | Rotation / phone layout | |
 | ✅ | App to background and back | via the browser; preview still renders |
 | ⏳ | Translations | |
+| ✅ | Back on the main window | sends the app to the background (closed OpenSCAD before) |
+| ❌ | Grey box over the 3D view after typing in a dock field | Qt's hidden Android edit view at the old field position; goes away when focus moves |
