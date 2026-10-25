@@ -72,6 +72,6 @@ Emulator: tablet 1600×1000, density 240 (rounded to device pixel ratio 2), x86_
 | ✅ | No stale pixels after partial repaints | fixed in the Qt plugin |
 | ✅ | Rotation; phone layout (1080x2400 @420dpi) | narrow portrait windows put the editor above the 3D view and side docks below; restored when wide; 3D toolbar overflows into a » menu |
 | ✅ | App to background and back | via the browser; preview still renders |
-| ⏳ | Translations | |
+| ✅ | Translations (per-app language German: welcome, menus, docks, status bar) | |
 | ✅ | Back on the main window | sends the app to the background (closed OpenSCAD before) |
 | ❌ | Grey box over the 3D view after typing in a dock field | Qt's hidden Android edit view at the old field position; goes away when focus moves |
