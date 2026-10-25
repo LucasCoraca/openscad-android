@@ -42,7 +42,7 @@ Emulator: tablet 1600×1000, density 240 (rounded to device pixel ratio 2), x86_
 | ✅ | View toolbar: view directions, view all, zoom, reset, perspective/orthogonal | objects vanished after some view changes: Qt changes GL state behind gl4es's caches; gl4es now resyncs at each frame |
 | ✅ | Show edges, axes, scale markers, crosshairs | edges: ViewEdges.frag divided a vec3 by an int (not valid GLSL ES) |
 | ⏳ | Perspective / orthogonal | |
-| ⏳ | Measure, selection | |
+| ✅ | Measure distance / angle by tapping points or edges (after F6) | |
 
 ## Menus and dialogs
 | | What | Notes |
@@ -70,7 +70,7 @@ Emulator: tablet 1600×1000, density 240 (rounded to device pixel ratio 2), x86_
 | ⚠️ | Emulator-only: "stuck fence / GPU hang" ANR once under host load (swiftshader) | all app threads idle |
 | ✅ | Taps land correctly in dialogs and menus | fixed in the Qt plugin |
 | ✅ | No stale pixels after partial repaints | fixed in the Qt plugin |
-| ⏳ | Rotation / phone layout | |
+| ✅ | Rotation; phone layout (1080x2400 @420dpi) | narrow portrait windows put the editor above the 3D view and side docks below; restored when wide; 3D toolbar overflows into a » menu |
 | ✅ | App to background and back | via the browser; preview still renders |
 | ⏳ | Translations | |
 | ✅ | Back on the main window | sends the app to the background (closed OpenSCAD before) |

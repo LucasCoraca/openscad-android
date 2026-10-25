@@ -14,6 +14,7 @@
 #include <QtWidgets/QAbstractScrollArea>
 #include <QtWidgets/QApplication>
 #include <QtWidgets/QDialog>
+#include <QtWidgets/QDockWidget>
 #include <QtWidgets/QMainWindow>
 #include <QtWidgets/QScrollArea>
 #include <QtCore/QPointer>
@@ -363,6 +364,48 @@ private:
   }
 };
 
+// A phone held upright leaves the docks beside the 3D view a few words wide: on a narrow portrait window, put the
+// editor above the view and the other side docks below it, and back where they were when it gets wide again.
+class PortraitLayout : public QObject
+{
+public:
+  using QObject::QObject;
+  bool eventFilter(QObject *watched, QEvent *event) override
+  {
+    auto *window = qobject_cast<QMainWindow *>(watched);
+    if (!window || (event->type() != QEvent::Resize && event->type() != QEvent::Show)) return false;
+    const QSize size = window->size();
+    const bool portrait = size.width() < size.height() && size.width() < 700;
+    if (window->property("portraitLayout").toBool() == portrait) return false;
+    window->setProperty("portraitLayout", portrait);
+    QTimer::singleShot(0, window, [window = QPointer<QMainWindow>(window), portrait] {
+      if (window) arrange(window, portrait);
+    });
+    return false;
+  }
+
+private:
+  static void arrange(QMainWindow *window, bool portrait)
+  {
+    QDockWidget *editor = nullptr;
+    for (QDockWidget *dock : window->findChildren<QDockWidget *>(Qt::FindDirectChildrenOnly)) {
+      if (dock->isFloating()) continue;
+      if (portrait) {
+        const Qt::DockWidgetArea area = window->dockWidgetArea(dock);
+        if (area != Qt::LeftDockWidgetArea && area != Qt::RightDockWidgetArea) continue;
+        dock->setProperty("landscapeArea", int(area));
+        const bool isEditor = dock->objectName() == QLatin1String("editorDock");
+        window->addDockWidget(isEditor ? Qt::TopDockWidgetArea : Qt::BottomDockWidgetArea, dock);
+        if (isEditor) editor = dock;
+      } else if (const QVariant area = dock->property("landscapeArea"); area.isValid()) {
+        window->addDockWidget(Qt::DockWidgetArea(area.toInt()), dock);
+        dock->setProperty("landscapeArea", QVariant());
+      }
+    }
+    if (editor) window->resizeDocks({editor}, {window->height() * 2 / 5}, Qt::Vertical);
+  }
+};
+
 void installAndroidAdjustments()
 {
   if (!qobject_cast<QApplication *>(QCoreApplication::instance())) return;
@@ -370,6 +413,7 @@ void installAndroidAdjustments()
   qApp->installEventFilter(new FitDialogsToScreen(qApp));
   qApp->installEventFilter(new BackKeyToBackground(qApp));
   qApp->installEventFilter(new KeyboardResizeKeeper(qApp));
+  qApp->installEventFilter(new PortraitLayout(qApp));
 }
 Q_COREAPP_STARTUP_FUNCTION(installAndroidAdjustments)
 
