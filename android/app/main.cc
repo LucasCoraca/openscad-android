@@ -3,8 +3,9 @@
 //
 //   <files>/openscad/bin                 OPENSCAD_APP_PATH: OpenSCAD looks for ../share/openscad from here
 //   <files>/openscad/share/openscad      examples, libraries, fonts, color schemes, shaders, templates
-//   <files>                              HOME; XDG_CONFIG_HOME is <files>/.config
-//   <files>/Documents                    XDG_DOCUMENTS_DIR: where OpenSCAD saves by default, and libraries/ for user libraries
+//   <files>                              HOME; XDG_CONFIG_HOME is <files>/.config; OpenSCAD keeps backups and user
+//                                        libraries in <files>/.local/share/OpenSCAD
+//   <files>/Documents                    XDG_DOCUMENTS_DIR: where OpenSCAD saves by default
 //   <cache>                              TMPDIR, XDG_CACHE_HOME (fontconfig cache)
 
 #include "openscad.h"
@@ -119,7 +120,10 @@ void bootstrap()
   const fs::path cache = pathOf(context.callObjectMethod("getCacheDir", "()Ljava/io/File;"));
   const fs::path root = files / "openscad";
   std::error_code ec;
-  for (const auto& d : {root / "bin", files / ".config", files / "Documents"}) fs::create_directories(d, ec);
+  // OpenSCAD's own folders: documentsPath() is $HOME/.local/share (backups of unsaved files, user libraries there)
+  for (const auto& d : {root / "bin", files / ".config", files / "Documents", files / ".local" / "share" / "OpenSCAD" / "backups",
+                        files / ".local" / "share" / "OpenSCAD" / "libraries"})
+    fs::create_directories(d, ec);
   unpackShare(context, root / "share" / "openscad");
 
   // the system language for gettext (OpenSCAD's own language setting, if any, goes into LANGUAGE)

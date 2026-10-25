@@ -1,5 +1,5 @@
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index 522d670..1fdd2c0 100644
+index 522d670..da6cdda 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
 @@ -35,6 +35,23 @@ configure_file(
@@ -79,7 +79,15 @@ index 522d670..1fdd2c0 100644
  elseif(UNIX)
    target_compile_definitions(OpenSCADLibInternal PUBLIC OPENSCAD_OS="Unix")
    set(PLATFORM_SOURCES src/io/imageutils-lodepng.cc src/platform/PlatformUtils-posix.cc)
-@@ -1685,10 +1727,15 @@ endif()
+@@ -1385,6 +1427,7 @@ set(GUI_SOURCES
+   src/gui/SettingsWriter.cc
+   src/gui/TabManager.cc
+   src/gui/UIUtils.cc
++  src/gui/AndroidDocuments.cc
+   src/gui/WindowManager.cc
+   src/gui/IgnoreWheelWhenNotFocused.cc
+   src/gui/input/AxisConfigWidget.cc
+@@ -1685,10 +1728,15 @@ endif()
  
  if (USE_QT6)
    if(NOT HEADLESS)
@@ -95,7 +103,7 @@ index 522d670..1fdd2c0 100644
    endif()
    if(ENABLE_GUI_TESTS)
      target_link_libraries(OpenSCADLibInternal PUBLIC Qt6::Test)
-@@ -1874,3 +1921,12 @@ add_sanitizers(OpenSCADLibInternal)
+@@ -1874,3 +1922,12 @@ add_sanitizers(OpenSCADLibInternal)
  if(INFO)
    include("cmake/Modules/info.cmake")
  endif()
@@ -324,6 +332,172 @@ index 10fc7c4..be6ba3f 100644
  #endif
        GL_CHECKD(OpenCSG::render(product->primitives()));
        GL_TRACE0("glDepthFunc(GL_EQUAL)");
+diff --git a/src/gui/AndroidDocuments.cc b/src/gui/AndroidDocuments.cc
+new file mode 100644
+index 0000000..ceafd30
+--- /dev/null
++++ b/src/gui/AndroidDocuments.cc
+@@ -0,0 +1,132 @@
++#include "gui/AndroidDocuments.h"
++
++#include <QString>
++
++#ifndef Q_OS_ANDROID
++
++namespace AndroidDocuments {
++QString pathForWrite(const QString& picked) { return picked; }
++QString pathForRead(const QString& picked) { return picked; }
++bool commit(const QString&) { return true; }
++QString displayName(const QString& path) { return path; }
++}  // namespace AndroidDocuments
++
++#else
++
++#include <QCoreApplication>
++#include <QCryptographicHash>
++#include <QDir>
++#include <QFile>
++#include <QFileInfo>
++#include <QJniEnvironment>
++#include <QJniObject>
++#include <QSettings>
++#include <QStandardPaths>
++
++#include "utils/printutils.h"
++
++namespace AndroidDocuments {
++
++namespace {
++
++constexpr auto kSettingsGroup = "android/documents";  // local copy path -> content:// URI
++
++bool isDocument(const QString& path) { return path.startsWith(QLatin1String("content:")); }
++
++// keep access to the document across restarts (the picker grants it for this session only)
++void keepPermission(const QString& uri)
++{
++  const QJniObject context = QNativeInterface::QAndroidApplication::context();
++  const QJniObject resolver =
++    context.callObjectMethod("getContentResolver", "()Landroid/content/ContentResolver;");
++  const QJniObject jUri = QJniObject::callStaticObjectMethod(
++    "android/net/Uri", "parse", "(Ljava/lang/String;)Landroid/net/Uri;", QJniObject::fromString(uri).object());
++  if (!resolver.isValid() || !jUri.isValid()) return;
++  constexpr jint readWrite = 1 | 2;  // Intent.FLAG_GRANT_READ_URI_PERMISSION | FLAG_GRANT_WRITE_URI_PERMISSION
++  resolver.callMethod<void>("takePersistableUriPermission", "(Landroid/net/Uri;I)V", jUri.object(), readWrite);
++  QJniEnvironment env;
++  if (env.checkAndClearExceptions()) {  // not persistable (some providers): fine for this session
++    resolver.callMethod<void>("takePersistableUriPermission", "(Landroid/net/Uri;I)V", jUri.object(), jint(1));
++    env.checkAndClearExceptions();
++  }
++}
++
++// a stable local path for the document: <cache>/documents/<hash of the URI>/<its display name>
++QString localCopyPath(const QString& uri)
++{
++  QString name = QFileInfo(uri).fileName();  // Qt's content file engine asks the provider for the display name
++  if (name.isEmpty() || name.contains('/')) name = QStringLiteral("document");
++  const QString hash =
++    QString::fromLatin1(QCryptographicHash::hash(uri.toUtf8(), QCryptographicHash::Sha1).toHex().left(12));
++  const QString dir =
++    QStandardPaths::writableLocation(QStandardPaths::CacheLocation) + QStringLiteral("/documents/") + hash;
++  QDir().mkpath(dir);
++  return dir + '/' + name;
++}
++
++void remember(const QString& local, const QString& uri)
++{
++  QSettings settings;
++  settings.beginGroup(kSettingsGroup);
++  settings.setValue(QString::fromLatin1(local.toUtf8().toBase64()), uri);
++}
++
++QString documentFor(const QString& local)
++{
++  QSettings settings;
++  settings.beginGroup(kSettingsGroup);
++  return settings.value(QString::fromLatin1(local.toUtf8().toBase64())).toString();
++}
++
++bool copyFile(const QString& from, const QString& to)
++{
++  QFile in(from);
++  if (!in.open(QIODevice::ReadOnly)) return false;
++  QFile out(to);
++  if (!out.open(QIODevice::WriteOnly | QIODevice::Truncate)) return false;
++  const QByteArray data = in.readAll();
++  return out.write(data) == data.size();
++}
++
++}  // namespace
++
++QString pathForWrite(const QString& picked)
++{
++  if (!isDocument(picked)) return picked;
++  keepPermission(picked);
++  const QString local = localCopyPath(picked);
++  remember(local, picked);
++  return local;
++}
++
++QString pathForRead(const QString& picked)
++{
++  if (!isDocument(picked)) return picked;
++  keepPermission(picked);
++  const QString local = localCopyPath(picked);
++  if (!copyFile(picked, local)) {
++    LOG(message_group::Error, "Cannot read \"%1$s\"", picked.toStdString());
++    return {};
++  }
++  remember(local, picked);
++  return local;
++}
++
++bool commit(const QString& path)
++{
++  const QString uri = documentFor(path);
++  if (uri.isEmpty()) return true;  // an ordinary file
++  if (copyFile(path, uri)) return true;
++  LOG(message_group::Error, "Cannot write \"%1$s\" to \"%2$s\"", path.toStdString(), uri.toStdString());
++  return false;
++}
++
++QString displayName(const QString& path)
++{
++  const QString uri = documentFor(path);
++  return uri.isEmpty() ? path : QFileInfo(path).fileName();
++}
++
++}  // namespace AndroidDocuments
++
++#endif  // Q_OS_ANDROID
+diff --git a/src/gui/AndroidDocuments.h b/src/gui/AndroidDocuments.h
+new file mode 100644
+index 0000000..6dfa3b5
+--- /dev/null
++++ b/src/gui/AndroidDocuments.h
+@@ -0,0 +1,22 @@
++#pragma once
++
++#include <QString>
++
++// Android: the system file picker returns content:// URIs, but OpenSCAD reads and writes files through paths.
++// A document picked there is worked on as a local copy in the app's cache, which is written back to the document
++// after each save or export. On other platforms these functions return the path unchanged and do nothing.
++namespace AndroidDocuments {
++
++// For a path the user picked to write: the path OpenSCAD should write to.
++QString pathForWrite(const QString& picked);
++
++// For a path the user picked to read: the path OpenSCAD should read (the document is copied there first).
++QString pathForRead(const QString& picked);
++
++// After writing `path`: copies it to its document, if it stands for one. Returns false if that failed.
++bool commit(const QString& path);
++
++// The name to show for `path` (the document's name for a local copy).
++QString displayName(const QString& path);
++
++}  // namespace AndroidDocuments
 diff --git a/src/gui/LibraryInfoDialog.cc b/src/gui/LibraryInfoDialog.cc
 index 4b3cffc..c876c7f 100644
 --- a/src/gui/LibraryInfoDialog.cc
@@ -349,10 +523,18 @@ index 4b3cffc..c876c7f 100644
        }
      } else {
 diff --git a/src/gui/MainWindow.cc b/src/gui/MainWindow.cc
-index e7fbc66..efb8c38 100644
+index e7fbc66..bdd8865 100644
 --- a/src/gui/MainWindow.cc
 +++ b/src/gui/MainWindow.cc
-@@ -59,7 +59,9 @@
+@@ -25,6 +25,7 @@
+  */
+ 
+ #include "gui/MainWindow.h"
++#include "gui/AndroidDocuments.h"
+ 
+ #include <sys/stat.h>
+ 
+@@ -59,7 +60,9 @@
  #include <QScreen>
  #include <QSettings>  //Include QSettings for direct operations on settings arrays
  #include <QSignalMapper>
@@ -362,7 +544,7 @@ index e7fbc66..efb8c38 100644
  #include <QSplitter>
  #include <QStatusBar>
  #include <QStringList>
-@@ -2080,7 +2082,9 @@ void MainWindow::actionRenderDone(const std::shared_ptr<const Geometry>& root_ge
+@@ -2080,7 +2083,9 @@ void MainWindow::actionRenderDone(const std::shared_ptr<const Geometry>& root_ge
    const uint soundThreshold =
      GlobalPreferences::inst()->getValue("advanced/timeThresholdOnRenderCompleteSound").toUInt();
    if (renderSoundEnabled && soundThreshold <= renderStatistic.ms().count() / 1000) {
@@ -372,7 +554,53 @@ index e7fbc66..efb8c38 100644
    }
  
    renderedEditor = activeEditor;
-@@ -3435,6 +3439,11 @@ void MainWindow::openCSGSettingsChanged()
+@@ -2580,9 +2585,11 @@ void MainWindow::actionExport(unsigned int dim, ExportInfo& exportInfo)
+   }
+   this->exportPaths[suffix] = exportFilename;
+ 
+-  const bool exportResult = exportFileByName(rootGeom, exportFilename.toStdString(), exportInfo);
++  const QString exportTarget = AndroidDocuments::pathForWrite(exportFilename);
++  const bool exportResult = exportFileByName(rootGeom, exportTarget.toStdString(), exportInfo) &&
++                            AndroidDocuments::commit(exportTarget);
+ 
+-  if (exportResult) fileExportedMessage(type_name, exportFilename);
++  if (exportResult) fileExportedMessage(type_name, AndroidDocuments::displayName(exportTarget));
+ }
+ 
+ void MainWindow::actionExportFileFormat(int fmt)
+@@ -2628,13 +2635,14 @@ void MainWindow::actionExportFileFormat(int fmt)
+     }
+ 
+     auto guard2 = scopedSetCurrentOutput();
+-    std::ofstream fstream(std::filesystem::u8path(csg_filename.toStdString()));
++    const QString csgTarget = AndroidDocuments::pathForWrite(csg_filename);
++    std::ofstream fstream(std::filesystem::u8path(csgTarget.toStdString()));
+     if (!fstream.is_open()) {
+       LOG("Can't open file \"%1$s\" for export", csg_filename.toStdString());
+     } else {
+       fstream << this->tree.getString(*this->rootNode, "\t") << "\n";
+       fstream.close();
+-      fileExportedMessage("CSG", csg_filename);
++      if (AndroidDocuments::commit(csgTarget)) fileExportedMessage("CSG", AndroidDocuments::displayName(csgTarget));
+       this->exportPaths[suffix] = csg_filename;
+     }
+ 
+@@ -2646,11 +2654,12 @@ void MainWindow::actionExportFileFormat(int fmt)
+     auto img_filename =
+       QFileDialog::getSaveFileName(this, _("Export Image"), exportPath(suffix), _("PNG Files (*.png)"));
+     if (!img_filename.isEmpty()) {
+-      const bool saveResult = qglview->save(img_filename.toStdString().c_str());
++      const QString imgTarget = AndroidDocuments::pathForWrite(img_filename);
++      const bool saveResult = qglview->save(imgTarget.toStdString().c_str()) && AndroidDocuments::commit(imgTarget);
+       if (saveResult) {
+         this->exportPaths[suffix] = img_filename;
+         auto guard = scopedSetCurrentOutput();
+-        fileExportedMessage("PNG", img_filename);
++        fileExportedMessage("PNG", AndroidDocuments::displayName(imgTarget));
+       } else {
+         LOG("Can't open file \"%1$s\" for export image", img_filename.toStdString());
+       }
+@@ -3435,6 +3444,11 @@ void MainWindow::openCSGSettingsChanged()
                       GlobalPreferences::inst()->getValue("advanced/forceGoldfeather").toBool()
                         ? OpenCSG::Goldfeather
                         : OpenCSG::Automatic);
@@ -384,7 +612,7 @@ index e7fbc66..efb8c38 100644
  #endif
  }
  
-@@ -3510,8 +3519,10 @@ void MainWindow::setupWindow()
+@@ -3510,8 +3524,10 @@ void MainWindow::setupWindow()
   */
  void MainWindow::setupCoreSubsystems()
  {
@@ -737,6 +965,115 @@ index c7e7d44..92d611b 100644
  
    void initializeGL() override;
    void resizeGL(int w, int h) override;
+diff --git a/src/gui/TabManager.cc b/src/gui/TabManager.cc
+index ec9a355..091e1e2 100644
+--- a/src/gui/TabManager.cc
++++ b/src/gui/TabManager.cc
+@@ -1,4 +1,5 @@
+ #include "gui/TabManager.h"
++#include "gui/AndroidDocuments.h"
+ 
+ #include <QApplication>
+ #include <QStringBuilder>
+@@ -124,7 +125,19 @@ void TabManager::closeCurrentTab()
+ 
+   /* Close tab or close the current window if only one tab is open. */
+   if (tabWidget->count() > 1) this->closeTabRequested(tabWidget->currentIndex());
++#ifdef Q_OS_ANDROID
++  // the window is the whole app on Android, closing it would quit: leave an empty design instead
++  else if (maybeSave(tabWidget->currentIndex())) {
++    const int last = tabWidget->currentIndex();
++    auto *closingEditor = qobject_cast<EditorInterface *>(tabWidget->widget(last));
++    closingEditor->setContentModified(false);  // already asked
++    closingEditor->parameterWidget->setModified(false);
++    createTab("");
++    closeTabRequested(last);
++  }
++#else
+   else parent->close();
++#endif
+ }
+ 
+ void TabManager::nextTab()
+@@ -712,12 +725,12 @@ bool TabManager::save(EditorInterface *edt, const QString& path)
+   writer.flush();
+   bool saveOk = writer.status() == QTextStream::Ok;
+   if (saveOk) {
+-    saveOk = file.commit();
++    saveOk = file.commit() && AndroidDocuments::commit(path);
+   } else {
+     file.cancelWriting();
+   }
+   if (saveOk) {
+-    LOG("Saved design '%1$s'.", path.toStdString());
++    LOG("Saved design '%1$s'.", AndroidDocuments::displayName(path).toStdString());
+     edt->parameterWidget->saveFile(path);
+     edt->setContentModified(false);
+     edt->parameterWidget->setModified(false);
+@@ -734,8 +747,8 @@ bool TabManager::saveAs(EditorInterface *edt)
+   assert(edt != nullptr);
+ 
+   const auto dir = edt->filepath.isEmpty() ? _("Untitled.scad") : edt->filepath;
+-  auto filename =
+-    QFileDialog::getSaveFileName(parent, _("Save File"), dir, _("OpenSCAD Designs (*.scad)"));
++  auto filename = AndroidDocuments::pathForWrite(
++    QFileDialog::getSaveFileName(parent, _("Save File"), dir, _("OpenSCAD Designs (*.scad)")));
+   if (filename.isEmpty()) {
+     return false;
+   }
+@@ -808,7 +821,7 @@ bool TabManager::saveACopy(EditorInterface *edt)
+   QStringList selectedFiles = saveCopyDialog.selectedFiles();
+   if (selectedFiles.isEmpty()) return false;
+ 
+-  QString savefile = selectedFiles.first();
++  QString savefile = AndroidDocuments::pathForWrite(selectedFiles.first());
+ 
+   if (savefile.isEmpty()) return false;
+ 
+@@ -827,9 +840,9 @@ bool TabManager::saveACopy(EditorInterface *edt)
+   bool saveOk = writer.status() == QTextStream::Ok;
+   if (!saveOk) file.cancelWriting();
+   else {
+-    saveOk = file.commit();
++    saveOk = file.commit() && AndroidDocuments::commit(savefile);
+     if (!saveOk) saveError(file, _("Error saving design"), savefile);
+-    else LOG("Saved design '%1$s'.", savefile.toLocal8Bit().constData());
++    else LOG("Saved design '%1$s'.", AndroidDocuments::displayName(savefile).toLocal8Bit().constData());
+   }
+   return saveOk;
+ }
+diff --git a/src/gui/UIUtils.cc b/src/gui/UIUtils.cc
+index 76ccebb..fcaf38c 100644
+--- a/src/gui/UIUtils.cc
++++ b/src/gui/UIUtils.cc
+@@ -25,6 +25,7 @@
+  */
+ 
+ #include "gui/UIUtils.h"
++#include "gui/AndroidDocuments.h"
+ 
+ #include <QColor>
+ #include <QDesktopServices>
+@@ -148,7 +149,8 @@ QFileInfo UIUtils::openFile(QWidget *parent, QStringList extensions)
+   QSettingsCached settings;
+   const auto last_dirname = settings.value("lastOpenDirName").toString();
+   const auto filter = fileOpenFilter("OpenSCAD Designs (%1)", std::move(extensions));
+-  const auto filename = QFileDialog::getOpenFileName(parent, "Open File", last_dirname, filter);
++  const auto filename =
++    AndroidDocuments::pathForRead(QFileDialog::getOpenFileName(parent, "Open File", last_dirname, filter));
+ 
+   if (filename.isEmpty()) {
+     return {};
+@@ -167,7 +169,8 @@ QFileInfoList UIUtils::openFiles(QWidget *parent, QStringList extensions)
+   const auto filenames = QFileDialog::getOpenFileNames(parent, "Open File", last_dirname, filter);
+ 
+   QFileInfoList fileInfoList;
+-  for (const QString& filename : filenames) {
++  for (const QString& picked : filenames) {
++    const QString filename = AndroidDocuments::pathForRead(picked);
+     if (filename.isEmpty()) {
+       continue;
+     }
 diff --git a/src/openscad.cc b/src/openscad.cc
 index 494c026..15a7bc5 100644
 --- a/src/openscad.cc
