@@ -130,6 +130,21 @@ index 522d670..5f67ce7 100644
 +    add_subdirectory("${OPENSCAD_ANDROID_DIR}/android/app" "${CMAKE_BINARY_DIR}/android-app")
 +  endif()
 +endif()
+diff --git a/shaders/MouseDepth.frag b/shaders/MouseDepth.frag
+new file mode 100644
+index 0000000..acda67c
+--- /dev/null
++++ b/shaders/MouseDepth.frag
+@@ -0,0 +1,9 @@
++#version 120
++
++// Depth of the fragment packed into 24 bits of RGB, for platforms that can't read the depth buffer (OpenGL ES).
++uniform vec3 frag_idcolor;  // unused; set by renderers drawing for selection
++void main() {
++  vec3 enc = fract(gl_FragCoord.z * vec3(1.0, 255.0, 65025.0));
++  enc -= enc.yzz * vec3(1.0 / 255.0, 1.0 / 255.0, 0.0);
++  gl_FragColor = vec4(enc, 1.0);
++}
 diff --git a/shaders/ViewEdges.frag b/shaders/ViewEdges.frag
 index f0f7aad..cd975a3 100644
 --- a/shaders/ViewEdges.frag
@@ -673,6 +688,107 @@ index d465eef..8d28d36 100644
  
    void resetMeasurementsState(bool enable, const QString& tooltipMessage);
    QActionGroup *measurementGroup;
+diff --git a/src/gui/MouseSelector.cc b/src/gui/MouseSelector.cc
+index 3c78193..5c2648d 100644
+--- a/src/gui/MouseSelector.cc
++++ b/src/gui/MouseSelector.cc
+@@ -62,6 +62,17 @@ void MouseSelector::initShader()
+         {"frag_idcolor", glGetUniformLocation(selectshader.shader_program, "frag_idcolor")},
+       },
+   };
++
++  const auto depthshader = ShaderUtils::compileShaderProgram(ShaderUtils::loadShaderSource("MouseSelector.vert"),
++                                                             ShaderUtils::loadShaderSource("MouseDepth.frag"));
++  this->depthshaderinfo = {
++    .resource = depthshader,
++    .type = ShaderUtils::ShaderType::SELECT_RENDERING,
++    .uniforms =
++      {
++        {"frag_idcolor", glGetUniformLocation(depthshader.shader_program, "frag_idcolor")},
++      },
++  };
+ }
+ 
+ /**
+@@ -93,10 +104,32 @@ void MouseSelector::setupFramebuffer(int width, int height)
+  * returns index of picked node (AbstractNode::idx) or -1 if no object was found.
+  */
+ int MouseSelector::select(const Renderer *renderer, int x, int y)
++{
++  GLubyte color[3] = {0};
++  if (render(renderer, this->shaderinfo, x, y, color) < 0) return -1;
++  return (uint32_t)color[0] | ((uint32_t)color[1] << 8) | ((uint32_t)color[2] << 16);
++}
++
++float MouseSelector::depthAt(const Renderer *renderer, int x, int y)
++{
++  if (!this->depthshaderinfo.resource.shader_program) return -1;
++  GLubyte color[3] = {0};
++  // nothing drawn: the clear color (0, 0, 0) would decode as depth 0, the near plane
++  if (render(renderer, this->depthshaderinfo, x, y, color) < 0) return -1;
++  if (color[0] == 0 && color[1] == 0 && color[2] == 0) return 1;
++  return color[0] / 255.0f + color[1] / 65025.0f + color[2] / 16581375.0f;
++}
++
++/**
++ * Render a frame with the given shader into our framebuffer and read the color at x, y.
++ * Returns -1 if there is no framebuffer or x, y is outside it.
++ */
++int MouseSelector::render(const Renderer *renderer, const ShaderUtils::ShaderInfo& shader, int x, int y,
++                          GLubyte color[3])
+ {
+   if (!this->framebuffer) return -1;
+ 
+-  // This function should render a frame, as usual, with the following changes:
++  // This should render a frame, as usual, with the following changes:
+   // * Render to as custom framebuffer
+   // * The shader should be the selector shader
+   // * Since we use ID color, no color setup is needed
+@@ -134,21 +167,17 @@ int MouseSelector::select(const Renderer *renderer, int x, int y)
+   glEnable(GL_DEPTH_TEST);
+ 
+   // call the renderer with the selector shader
+-  GL_CHECKD(renderer->draw(false, &this->shaderinfo));
++  GL_CHECKD(renderer->draw(false, &shader));
+ 
+   // Not strictly necessary, but a nop if not required.
+   glFlush();
+   glFinish();
+ 
+-  // Grab the color from the framebuffer and convert it back to an identifier
+-  GLubyte color[3] = {0};
+   // Qt position is originated top-left, so flip y to get GL coordinates.
+   GL_CHECKD(glReadPixels(x, height - y, 1, 1, GL_RGB, GL_UNSIGNED_BYTE, color));
+ 
+-  const int index = (uint32_t)color[0] | ((uint32_t)color[1] << 8) | ((uint32_t)color[2] << 16);
+-
+   // Switch the active framebuffer back to the default
+   this->framebuffer->unbind();
+ 
+-  return index;
++  return 0;
+ }
+diff --git a/src/gui/MouseSelector.h b/src/gui/MouseSelector.h
+index 0da0238..a42d70e 100644
+--- a/src/gui/MouseSelector.h
++++ b/src/gui/MouseSelector.h
+@@ -20,10 +20,16 @@ public:
+ 
+   int select(const Renderer *renderer, int x, int y);
+ 
++  // Depth buffer value (0..1, 1 where nothing was drawn) at x, y (pixels, top-left origin), rendered offscreen: for
++  // OpenGL ES, which can't read the depth buffer with glReadPixels. Returns a negative value on failure.
++  float depthAt(const Renderer *renderer, int x, int y);
++
+   ShaderUtils::ShaderInfo shaderinfo;
++  ShaderUtils::ShaderInfo depthshaderinfo;
+ 
+ private:
+   void initShader();
++  int render(const Renderer *renderer, const ShaderUtils::ShaderInfo& shader, int x, int y, GLubyte color[3]);
+   void setupFramebuffer(int width, int height);
+ 
+   std::unique_ptr<FBO> framebuffer;
 diff --git a/src/gui/Network.h b/src/gui/Network.h
 index e8ebbfd..288df80 100644
 --- a/src/gui/Network.h
@@ -741,7 +857,7 @@ index da1c5af..adab615 100644
  #ifdef Q_OS_MACOS
    this->defaultmap["editor/ctrlmousewheelzoom"] = false;
 diff --git a/src/gui/QGLView.cc b/src/gui/QGLView.cc
-index f41d62d..fa5644c 100644
+index f41d62d..eab10ec 100644
 --- a/src/gui/QGLView.cc
 +++ b/src/gui/QGLView.cc
 @@ -53,11 +53,19 @@
@@ -960,6 +1076,35 @@ index f41d62d..fa5644c 100644
    GLView::paintGL();
  
    if (statusLabel) {
+@@ -303,6 +467,17 @@ void QGLView::mouseDoubleClickEvent(QMouseEvent *event)
+   const double y = viewport[3] - event->pos().y() * dpi;
+   GLfloat z = 0;
+ 
++#ifdef __ANDROID__
++  // OpenGL ES can't read the depth buffer: render the depth offscreen as color
++  if (!this->getRenderer()) return;
++  this->selector->reset(this);
++  z = this->selector->depthAt(this->getRenderer(), static_cast<int>(x), static_cast<int>(viewport[3] - y));
++  setupCamera();  // the selector set up its own matrices
++  if (z < 0) {
++    if (statusLabel) statusLabel->setText("Center View: could not read the depth");
++    return;
++  }
++#else
+   glGetError();  // clear error state so we don't pick up previous errors
+   glReadPixels(x, y, 1, 1, GL_DEPTH_COMPONENT, GL_FLOAT, &z);
+   if (const auto glError = glGetError(); glError != GL_NO_ERROR) {
+@@ -313,8 +488,9 @@ void QGLView::mouseDoubleClickEvent(QMouseEvent *event)
+     }
+     return;
+   }
++#endif
+ 
+-  if (z == 1) {
++  if (z >= 1) {
+     return;  // outside object
+   }
+ 
 diff --git a/src/gui/QGLView.h b/src/gui/QGLView.h
 index c7e7d44..92d611b 100644
 --- a/src/gui/QGLView.h

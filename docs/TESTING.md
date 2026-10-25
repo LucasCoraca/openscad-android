@@ -24,7 +24,7 @@ Emulator: tablet 1600×1000, density 240 (rounded to device pixel ratio 2), x86_
 | ✅ | Window grows back when the keyboard hides | |
 | ✅ | Tap to place cursor (keyboard appears) | |
 | ⏳ | Long-press selection, copy/cut/paste | |
-| ✅ | Undo, Edit-menu copy/paste (Android clipboard), Find (highlights, next), Replace | ❌ typing with the keyboard into the Replace field after a selection scrambles letter order ("mbli") |
+| ✅ | Undo, Edit-menu copy/paste (Android clipboard), Find (highlights, next), Replace | the cursor handle covers the field below for 4 s, as on Android (tap again) |
 | ✅ | Tabs: several files, new file | |
 | ✅ | Finger scrolling (editor, lists, text views) | QScroller on every scroll area; drags no longer select |
 
@@ -36,7 +36,7 @@ Emulator: tablet 1600×1000, density 240 (rounded to device pixel ratio 2), x86_
 | ✅ | Colours, text(), axes indicator | |
 | ✅ | One finger: rotate | |
 | ✅ | Two fingers: pinch zoom, pan | |
-| ⏳ | Long press: selection menu; double tap: centre | |
+| ✅ | Long press: object menu, jumps to the source line; double tap: centre on the point | GLES cannot read depth: depth rendered offscreen as color (MouseSelector::depthAt) |
 | ✅ | Thrown Together | |
 | ✅ | Render (F6) with Manifold | |
 | ✅ | View toolbar: view directions, view all, zoom, reset, perspective/orthogonal | objects vanished after some view changes: Qt changes GL state behind gl4es's caches; gl4es now resyncs at each frame |
@@ -66,6 +66,8 @@ Emulator: tablet 1600×1000, density 240 (rounded to device pixel ratio 2), x86_
 ## System
 | | What | Notes |
 |---|---|---|
+| ✅ | Text fields with the on-screen keyboard (composing, suggestions) | `adb input text` (raw key events) can reorder letters; the keyboard itself does not |
+| ⚠️ | Emulator-only: "stuck fence / GPU hang" ANR once under host load (swiftshader) | all app threads idle |
 | ✅ | Taps land correctly in dialogs and menus | fixed in the Qt plugin |
 | ✅ | No stale pixels after partial repaints | fixed in the Qt plugin |
 | ⏳ | Rotation / phone layout | |
