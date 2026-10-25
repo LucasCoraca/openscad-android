@@ -77,6 +77,15 @@ android {
         noCompress 'rcc', 'zip'
     }
 
+    // Shrink the Java side: androidx.core (from Qt's template) drags in Kotlin's standard library, most of the dex.
+    // Qt calls its Java classes from C++ through JNI, which R8 cannot see: proguard-rules.pro keeps them.
+    buildTypes {
+        release {
+            minifyEnabled true
+            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+        }
+    }
+
     defaultConfig {
         resConfig "en"
         minSdkVersion qtMinSdkVersion
