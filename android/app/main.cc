@@ -11,6 +11,9 @@
 #include "openscad.h"
 
 #include <QtCore/QCoreApplication>
+#include <QtWidgets/QAbstractScrollArea>
+#include <QtWidgets/QApplication>
+#include <QtWidgets/QScroller>
 #include <QtCore/QJniEnvironment>
 #include <QtCore/QJniObject>
 #include <QtCore/qresource.h>
@@ -156,6 +159,37 @@ void bootstrap()
 }
 
 }  // namespace
+
+// Touch scrolling: every scroll area (editor, console, lists, trees, preferences pages) scrolls with a finger drag
+// and flicks, as on Android, instead of starting a text selection. The scroller holds back the (touch-synthesized)
+// mouse press until it knows the finger is not dragging, so a tap still clicks and a drag never selects.
+class TouchScrolling : public QObject
+{
+public:
+  using QObject::QObject;
+  bool eventFilter(QObject *watched, QEvent *event) override
+  {
+    if (event->type() == QEvent::Polish) {
+      if (auto *area = qobject_cast<QAbstractScrollArea *>(watched); area && area->viewport()) {
+        QScroller::grabGesture(area->viewport(), QScroller::LeftMouseButtonGesture);
+        QScrollerProperties props = QScroller::scroller(area->viewport())->scrollerProperties();
+        props.setScrollMetric(QScrollerProperties::OvershootDragResistanceFactor, 0.0);
+        props.setScrollMetric(QScrollerProperties::OvershootScrollDistanceFactor, 0.0);
+        props.setScrollMetric(QScrollerProperties::HorizontalOvershootPolicy, QScrollerProperties::OvershootAlwaysOff);
+        props.setScrollMetric(QScrollerProperties::VerticalOvershootPolicy, QScrollerProperties::OvershootAlwaysOff);
+        QScroller::scroller(area->viewport())->setScrollerProperties(props);
+      }
+    }
+    return false;
+  }
+};
+
+void installTouchScrolling()
+{
+  if (qobject_cast<QApplication *>(QCoreApplication::instance()))
+    qApp->installEventFilter(new TouchScrolling(qApp));
+}
+Q_COREAPP_STARTUP_FUNCTION(installTouchScrolling)
 
 int main(int argc, char **argv)
 {

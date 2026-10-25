@@ -21,11 +21,12 @@ Emulator: tablet 1600×1000, density 240 (rounded to device pixel ratio 2), x86_
 | ✅ | Typing (soft keyboard appears, layout resizes) | |
 | ✅ | Syntax highlighting, line numbers, folding markers | |
 | ✅ | Autocompletion popup while typing | was crashing / freezing; fixed in the Qt plugin |
-| ❌ | Window grows back when the keyboard hides | stays at the keyboard-up size |
-| ⏳ | Tap to place cursor, long-press selection, copy/cut/paste | |
+| ✅ | Window grows back when the keyboard hides | |
+| ✅ | Tap to place cursor (keyboard appears) | |
+| ⏳ | Long-press selection, copy/cut/paste | |
 | ⏳ | Undo / redo, indent, comment, find & replace | |
 | ⏳ | Tabs: several files, close tab | |
-| ❌ | Finger scrolling in long files | drag selects text instead |
+| ✅ | Finger scrolling (editor, lists, text views) | QScroller on every scroll area; drags no longer select |
 
 ## 3D view
 | | What | Notes |
