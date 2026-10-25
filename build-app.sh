@@ -3,6 +3,7 @@
 set -e
 ABI=${1:-x86_64}
 source "$(dirname "$0")/env.sh"
+wait_for_resources
 $NICE cmake --build $R/build/app-$ABI --target openscad_android_make_apk -j$JOBS
 mkdir -p $R/dist
 short=${ABI/-v8a/}

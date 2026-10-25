@@ -14,6 +14,43 @@ index 461b2da..8c55e5e 100644
          QWindowSystemInterface::TouchPoint touchPoint;
          // Start numbering touch points from 1
          touchPoint.id = id + 1;
+diff --git a/src/plugins/platforms/android/qandroidplatformintegration.cpp b/src/plugins/platforms/android/qandroidplatformintegration.cpp
+index 6b546ea..535080c 100644
+--- a/src/plugins/platforms/android/qandroidplatformintegration.cpp
++++ b/src/plugins/platforms/android/qandroidplatformintegration.cpp
+@@ -339,12 +339,31 @@ bool QAndroidPlatformIntegration::hasCapability(Capability cap) const
+     }
+ }
+ 
++namespace {
++// openscad-android: QRhiBackingStore uploads only the region of each flush to the window's texture, so the content of
++// a flush that doesn't make it to the screen (window not exposed yet, swap chain out of date, a dropped frame) is lost
++// for good, and stale pixels stay until that area is painted again (seen in dialogs, menus, stacked pages). Upload the
++// whole window every time: a flush happens only when something changed, and the whole texture is drawn anyway.
++class QAndroidWholeWindowBackingStore : public QRhiBackingStore
++{
++public:
++    using QRhiBackingStore::QRhiBackingStore;
++    FlushResult rhiFlush(QWindow *window, qreal sourceDevicePixelRatio, const QRegion &region, const QPoint &offset,
++                         QPlatformTextureList *textures, bool translucentBackground) override
++    {
++        Q_UNUSED(region);
++        return QRhiBackingStore::rhiFlush(window, sourceDevicePixelRatio, QRegion(QRect(QPoint(), window->size())),
++                                          offset, textures, translucentBackground);
++    }
++};
++} // namespace
++
+ QPlatformBackingStore *QAndroidPlatformIntegration::createPlatformBackingStore(QWindow *window) const
+ {
+     if (!QtAndroidPrivate::activity().isValid())
+         return nullptr;
+ 
+-    return new QRhiBackingStore(window);
++    return new QAndroidWholeWindowBackingStore(window);
+ }
+ 
+ QPlatformOpenGLContext *QAndroidPlatformIntegration::createPlatformOpenGLContext(QOpenGLContext *context) const
 diff --git a/src/plugins/platforms/android/qandroidplatformwindow.cpp b/src/plugins/platforms/android/qandroidplatformwindow.cpp
 index eb1fdab..9be4863 100644
 --- a/src/plugins/platforms/android/qandroidplatformwindow.cpp

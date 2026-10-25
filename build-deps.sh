@@ -6,6 +6,7 @@
 set -e
 ABI=${1:?usage: build-deps.sh <arm64-v8a|x86_64> [step...]}; shift
 source "$(dirname "$0")/env.sh"
+wait_for_resources
 case $ABI in
   arm64-v8a) TRIPLE=aarch64-linux-android ;;
   x86_64) TRIPLE=x86_64-linux-android ;;

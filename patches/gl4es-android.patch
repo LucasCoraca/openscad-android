@@ -1,6 +1,6 @@
 diff -ruN gl4es-orig/include/gl4esinit.h gl4es-1.1.6/include/gl4esinit.h
 --- gl4es-orig/include/gl4esinit.h	2026-10-24 19:20:26.595070205 -0300
-+++ gl4es-1.1.6/include/gl4esinit.h	2026-10-24 19:20:36.330478363 -0300
++++ gl4es-1.1.6/include/gl4esinit.h	2026-10-24 21:36:16.601405847 -0300
 @@ -22,6 +22,8 @@
  void initialize_gl4es(void);
  // do this to uninitialize GL4ES if init constructors are disabled.
@@ -10,9 +10,10 @@ diff -ruN gl4es-orig/include/gl4esinit.h gl4es-1.1.6/include/gl4esinit.h
  // wrapped GetProcAddress
  void* APIENTRY_GL4ES gl4es_GetProcAddress(const char *name);
  
+Binary files gl4es-orig/lib/libGL.a and gl4es-1.1.6/lib/libGL.a differ
 diff -ruN gl4es-orig/src/gl/framebuffers.c gl4es-1.1.6/src/gl/framebuffers.c
 --- gl4es-orig/src/gl/framebuffers.c	2026-10-24 19:20:26.651753962 -0300
-+++ gl4es-1.1.6/src/gl/framebuffers.c	2026-10-24 19:20:36.247356909 -0300
++++ gl4es-1.1.6/src/gl/framebuffers.c	2026-10-24 21:36:16.601782626 -0300
 @@ -1814,3 +1814,15 @@
  AliasExport(void,glClearNamedFramebufferuiv,EXT,(GLuint framebuffer, GLenum buffer, GLint drawbuffer, const GLuint *value));
  AliasExport(void,glClearNamedFramebufferfv,EXT,(GLuint framebuffer, GLenum buffer, GLint drawbuffer, const GLfloat *value));
@@ -29,3 +30,36 @@ diff -ruN gl4es-orig/src/gl/framebuffers.c gl4es-1.1.6/src/gl/framebuffers.c
 +    glstate->fbo.fbo_read = glstate->fbo.fbo_draw = glstate->fbo.current_fb = glstate->fbo.fbo_0;
 +    glstate->fbo.internal = 0;
 +}
+diff -ruN gl4es-orig/src/gl/shaderconv.c gl4es-1.1.6/src/gl/shaderconv.c
+--- gl4es-orig/src/gl/shaderconv.c	2026-10-24 19:20:26.659484737 -0300
++++ gl4es-1.1.6/src/gl/shaderconv.c	2026-10-24 21:36:16.602239637 -0300
+@@ -451,7 +451,7 @@
+   int maskbefore = 4|(isVertex?1:2);
+   int maskafter = 8|(isVertex?1:2);
+   if((globals4es.dbgshaderconv&maskbefore)==maskbefore) {
+-    printf("Shader source%s:\n%s\n", fpeShader?" (FPEShader generated)":"", pEntry);
++    LOGD("Shader source%s:\n%s\n", fpeShader?" (FPEShader generated)":"", pEntry);
+   }
+   int comments = globals4es.comments;
+   
+@@ -508,6 +508,11 @@
+   #endif
+   //sprintf(GLESFullHeader, GLESHeader, (wanthighp && hardext.highp==1 && !isVertex)?GLESUseFragHighp:"", (wanthighp)?"highp":"mediump", (wanthighp)?"highp":"mediump");
+   sprintf(GLESFullHeader, GLESHeader[versionHeader], "", (wanthighp)?"highp":"mediump", (wanthighp)?"highp":"mediump");
++  // Desktop GL computes the same vertex position the same way in every program (ftransform() is invariant), and
++  // multipass techniques depend on it: OpenCSG, then glDepthFunc(GL_EQUAL). GLES only promises that for an invariant
++  // gl_Position, so every vertex shader, the fixed function emulation's included, declares it so.
++  if(isVertex)
++    strcat(GLESFullHeader, "invariant gl_Position;\n");
+ 
+   int tmpsize = strlen(pBuffer)*2+strlen(GLESFullHeader)+100;
+   char* Tmp = (char*)calloc(1, tmpsize);
+@@ -1254,7 +1259,7 @@
+   
+   // finish
+   if((globals4es.dbgshaderconv&maskafter)==maskafter) {
+-    printf("New Shader source:\n%s\n", Tmp);
++    LOGD("New Shader source:\n%s\n", Tmp);  // (printf is lost on Android)
+   }
+   // clean preproc'd source
+   if(versionString != NULL)

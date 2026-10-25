@@ -444,10 +444,20 @@ index da1c5af..2fd6b10 100644
  #ifdef Q_OS_MACOS
    this->defaultmap["editor/ctrlmousewheelzoom"] = false;
 diff --git a/src/gui/QGLView.cc b/src/gui/QGLView.cc
-index f41d62d..b79907b 100644
+index f41d62d..fa5644c 100644
 --- a/src/gui/QGLView.cc
 +++ b/src/gui/QGLView.cc
-@@ -58,6 +58,9 @@
+@@ -53,11 +53,19 @@
+ #include <QMessageBox>
+ #include <QPushButton>
+ #include <QTimer>
++#include <QLineF>
++#include <QTouchEvent>
++#include <QGuiApplication>
++#include <QStyleHints>
++#include <QDateTime>
+ #include <QTextEdit>
+ #include <QVBoxLayout>
  #include <QErrorMessage>
  #ifdef USE_GLAD
  #include <QOpenGLContext>
@@ -457,7 +467,7 @@ index f41d62d..b79907b 100644
  #endif
  #include "gui/OpenCSGWarningDialog.h"
  
-@@ -78,8 +81,12 @@ namespace {
+@@ -78,8 +86,12 @@ namespace {
  QSurfaceFormat compatibleWidgetFormat()
  {
    auto format = QSurfaceFormat::defaultFormat();
@@ -470,7 +480,154 @@ index f41d62d..b79907b 100644
    if (format.depthBufferSize() < 24) format.setDepthBufferSize(24);
    if (format.stencilBufferSize() < 8) format.setStencilBufferSize(8);
    return format;
-@@ -130,7 +137,14 @@ void QGLView::initializeGL()
+@@ -91,8 +103,146 @@ QGLView::QGLView(QWidget *parent) : QOpenGLWidget(parent)
+ {
+   setFormat(compatibleWidgetFormat());
+   init();
++#ifdef Q_OS_ANDROID
++  setAttribute(Qt::WA_AcceptTouchEvents);
++  touch_long_press = new QTimer(this);
++  touch_long_press->setSingleShot(true);
++  touch_long_press->setInterval(QGuiApplication::styleHints()->mousePressAndHoldInterval());
++  connect(touch_long_press, &QTimer::timeout, this, [this] {
++    if (touch_fingers != 1 || touch_moved) return;
++    touch_long_pressed = true;  // a right click where the finger is; the finger's release does nothing more
++    touchMouse(QEvent::MouseButtonRelease, touch_start, Qt::LeftButton, Qt::NoButton);  // end the pending drag
++    mouse_drag_moved = false;
++    touchMouse(QEvent::MouseButtonPress, touch_start, Qt::RightButton, Qt::RightButton);
++    touchMouse(QEvent::MouseButtonRelease, touch_start, Qt::RightButton, Qt::NoButton);
++  });
++#endif
+ }
+ 
++#ifdef Q_OS_ANDROID
++void QGLView::touchMouse(QEvent::Type type, const QPointF& pos, Qt::MouseButton button, Qt::MouseButtons buttons)
++{
++  QMouseEvent me(type, pos, mapToGlobal(pos), button, buttons, Qt::NoModifier);
++  switch (type) {
++  case QEvent::MouseButtonPress:         mousePressEvent(&me); break;
++  case QEvent::MouseMove:                mouseMoveEvent(&me); break;
++  case QEvent::MouseButtonRelease:       mouseReleaseEvent(&me); break;
++  case QEvent::MouseButtonDblClick:      mouseDoubleClickEvent(&me); break;
++  default: break;
++  }
++}
++
++bool QGLView::event(QEvent *event)
++{
++  const auto type = event->type();
++  if (type != QEvent::TouchBegin && type != QEvent::TouchUpdate && type != QEvent::TouchEnd &&
++      type != QEvent::TouchCancel) {
++    return QOpenGLWidget::event(event);
++  }
++  auto *te = static_cast<QTouchEvent *>(event);
++  event->accept();
++  QList<QPointF> down;  // positions of the fingers still on the screen
++  for (const auto& p : te->points()) {
++    if (p.state() != QEventPoint::Released) down.append(p.position());
++  }
++  const double tapSlop = 10.0 * devicePixelRatio();
++
++  if (type == QEvent::TouchBegin) {
++    touch_fingers = 1;
++    touch_moved = false;
++    touch_long_pressed = false;
++    touch_start = down.value(0);
++    touch_long_press->start();
++    touchMouse(QEvent::MouseButtonPress, touch_start, Qt::LeftButton, Qt::LeftButton);
++    return true;
++  }
++
++  if (type == QEvent::TouchCancel) {
++    touch_long_press->stop();
++    if (touch_fingers == 1 && !touch_long_pressed) {
++      mouse_drag_moved = true;  // no click
++      touchMouse(QEvent::MouseButtonRelease, touch_start, Qt::LeftButton, Qt::NoButton);
++    } else if (touch_fingers >= 2) {
++      touchMouse(QEvent::MouseButtonRelease, touch_center, Qt::RightButton, Qt::NoButton);
++    }
++    touch_fingers = 0;
++    return true;
++  }
++
++  if (down.size() >= 2 && touch_fingers < 2) {
++    // a second finger: end the one finger drag without a click, start pinch/pan
++    touch_long_press->stop();
++    if (!touch_long_pressed) {
++      mouse_drag_moved = true;
++      touchMouse(QEvent::MouseButtonRelease, touch_start, Qt::LeftButton, Qt::NoButton);
++    }
++    touch_fingers = 2;
++    touch_center = (down[0] + down[1]) / 2;
++    touch_distance = QLineF(down[0], down[1]).length();
++    touch_zoom_rest = 0;
++    touchMouse(QEvent::MouseButtonPress, touch_center, Qt::RightButton, Qt::RightButton);
++    mouse_drag_moved = true;  // a two finger gesture never right-clicks
++    return true;
++  }
++
++  if (touch_fingers >= 2) {
++    if (down.size() >= 2) {
++      const QPointF center = (down[0] + down[1]) / 2;
++      const double distance = QLineF(down[0], down[1]).length();
++      touchMouse(QEvent::MouseMove, center, Qt::NoButton, Qt::RightButton);  // pan
++      if (touch_distance > 0 && distance > 0) {
++        // fingers apart -> closer: Camera::zoom() scales the distance by 0.9^(steps/120)
++        touch_zoom_rest += 120.0 * std::log(touch_distance / distance) / std::log(0.9);
++        const int steps = static_cast<int>(touch_zoom_rest);
++        if (steps != 0) {
++          touch_zoom_rest -= steps;
++          zoomCursor(static_cast<int>(center.x()), static_cast<int>(center.y()), steps);
++        }
++      }
++      touch_center = center;
++      touch_distance = distance;
++    }
++    if (type == QEvent::TouchEnd || down.isEmpty()) {
++      touchMouse(QEvent::MouseButtonRelease, touch_center, Qt::RightButton, Qt::NoButton);
++      touch_fingers = 0;
++    }
++    return true;
++  }
++
++  // one finger
++  const QPointF pos = down.isEmpty() ? te->points().value(0).position() : down[0];
++  if (QLineF(pos, touch_start).length() > tapSlop) {
++    touch_moved = true;
++    touch_long_press->stop();
++  }
++  if (touch_long_pressed) {
++    if (type == QEvent::TouchEnd) touch_fingers = 0;
++    return true;
++  }
++  if (type == QEvent::TouchUpdate) {
++    if (touch_moved) touchMouse(QEvent::MouseMove, pos, Qt::NoButton, Qt::LeftButton);
++    return true;
++  }
++  // TouchEnd
++  touch_long_press->stop();
++  touch_fingers = 0;
++  if (!touch_moved) mouse_drag_moved = false;  // a tap is a click, however the finger wobbled
++  touchMouse(QEvent::MouseButtonRelease, pos, Qt::LeftButton, Qt::NoButton);
++  if (!touch_moved) {
++    const qint64 now = QDateTime::currentMSecsSinceEpoch();
++    if (now - touch_last_tap_ms < QGuiApplication::styleHints()->mouseDoubleClickInterval() &&
++        QLineF(pos, touch_last_tap).length() < 3 * tapSlop) {
++      touchMouse(QEvent::MouseButtonDblClick, pos, Qt::LeftButton, Qt::LeftButton);
++      touch_last_tap_ms = 0;
++    } else {
++      touch_last_tap_ms = now;
++      touch_last_tap = pos;
++    }
++  }
++  return true;
++}
++#endif
++
+ QGLView::~QGLView()
+ {
+   // Just to make sure we can call GL functions in the supertype destructor
+@@ -130,7 +280,14 @@ void QGLView::initializeGL()
    // ..in a separate compilation unit to avoid duplicate symbols with x.
    initializeGlew();
  #endif
@@ -486,7 +643,7 @@ index f41d62d..b79907b 100644
    // We could ask for gladLoadGLES2UserPtr() here if we want to use GLES2+
    const auto version = gladLoadGLUserPtr(
      [](void *ctx, const char *name) -> GLADapiproc {
-@@ -209,12 +223,19 @@ void QGLView::display_opencsg_warning_dialog()
+@@ -209,12 +366,19 @@ void QGLView::display_opencsg_warning_dialog()
  
  void QGLView::resizeGL(int w, int h)
  {
@@ -506,6 +663,41 @@ index f41d62d..b79907b 100644
    GLView::paintGL();
  
    if (statusLabel) {
+diff --git a/src/gui/QGLView.h b/src/gui/QGLView.h
+index c7e7d44..92d611b 100644
+--- a/src/gui/QGLView.h
++++ b/src/gui/QGLView.h
+@@ -13,6 +13,7 @@
+ #include <QWidget>
+ #include <QtGlobal>
+ #include <QOpenGLWidget>
++#include <QTimer>
+ #include <QLabel>
+ #include <string>
+ #include <vector>
+@@ -98,6 +99,22 @@ private:
+   void mouseMoveEvent(QMouseEvent *event) override;
+   void mouseReleaseEvent(QMouseEvent *event) override;
+   void mouseDoubleClickEvent(QMouseEvent *event) override;
++#ifdef Q_OS_ANDROID
++  // touch: one finger is the left mouse button, a long press a right click, a double tap a double click; two fingers
++  // pinch to zoom and move to pan (as a right button drag)
++  bool event(QEvent *event) override;
++  void touchMouse(QEvent::Type type, const QPointF& pos, Qt::MouseButton button, Qt::MouseButtons buttons);
++  int touch_fingers = 0;           // fingers of the current gesture so far (1, or 2 once a second one came)
++  QPointF touch_start;             // where the gesture's first finger went down
++  bool touch_moved = false;        // the first finger moved beyond the tap threshold
++  bool touch_long_pressed = false;
++  QTimer *touch_long_press = nullptr;
++  QPointF touch_center;            // two fingers: last centroid and distance
++  double touch_distance = 0;
++  double touch_zoom_rest = 0;      // pinch zoom not yet applied (Camera::zoom takes whole steps)
++  qint64 touch_last_tap_ms = 0;
++  QPointF touch_last_tap;
++#endif
+ 
+   void initializeGL() override;
+   void resizeGL(int w, int h) override;
 diff --git a/src/openscad.cc b/src/openscad.cc
 index 494c026..15a7bc5 100644
 --- a/src/openscad.cc
