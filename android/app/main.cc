@@ -13,6 +13,10 @@
 #include <QtCore/QCoreApplication>
 #include <QtWidgets/QAbstractScrollArea>
 #include <QtWidgets/QApplication>
+#include <QtWidgets/QDialog>
+#include <QtGui/QScreen>
+#include <QtWidgets/QProxyStyle>
+#include <QtWidgets/QStyleOption>
 #include <QtWidgets/QScroller>
 #include <QtCore/QJniEnvironment>
 #include <QtCore/QJniObject>
@@ -23,11 +27,15 @@
 #include <android/log.h>
 #include <zip.h>
 
+#include <algorithm>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <thread>
 #include <vector>
+
+#include <unistd.h>
 
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, "openscad", __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, "openscad", __VA_ARGS__)
@@ -116,8 +124,36 @@ bool unpackShare(const QJniObject& context, const fs::path& dest)
   return ok;
 }
 
+// Android drops stdout and stderr, where OpenSCAD reports e.g. shader compile errors (and the command line output):
+// send their lines to logcat (tag openscad-stdio).
+void forwardStdioToLogcat()
+{
+  int fds[2];
+  if (pipe(fds) != 0) return;
+  setvbuf(stdout, nullptr, _IOLBF, 0);
+  setvbuf(stderr, nullptr, _IONBF, 0);
+  dup2(fds[1], STDOUT_FILENO);
+  dup2(fds[1], STDERR_FILENO);
+  close(fds[1]);
+  std::thread([fd = fds[0]] {
+    std::string line;
+    char buf[1024];
+    ssize_t n;
+    while ((n = read(fd, buf, sizeof buf)) > 0) {
+      for (ssize_t i = 0; i < n; i++) {
+        if (buf[i] != '\n') line += buf[i];
+        if (buf[i] == '\n' || line.size() > 900) {
+          __android_log_write(ANDROID_LOG_INFO, "openscad-stdio", line.c_str());
+          line.clear();
+        }
+      }
+    }
+  }).detach();
+}
+
 void bootstrap()
 {
+  forwardStdioToLogcat();
   const QJniObject context = QNativeInterface::QAndroidApplication::context();
   const fs::path files = pathOf(context.callObjectMethod("getFilesDir", "()Ljava/io/File;"));
   const fs::path cache = pathOf(context.callObjectMethod("getCacheDir", "()Ljava/io/File;"));
@@ -190,6 +226,65 @@ void installTouchScrolling()
     qApp->installEventFilter(new TouchScrolling(qApp));
 }
 Q_COREAPP_STARTUP_FUNCTION(installTouchScrolling)
+
+// Fusion's metrics are dpi-scaled against 96 dpi, but Android's logical dpi is based on 72, so they come out a
+// quarter too small:
+// - a menu item's check column is sized from those metrics, but painted at least 0.79 x the item height, so every
+//   menu label was elided ("Para…tric"): reserve the column the painter actually uses;
+// - small icons (menus, lists) shrank to a few pixels: keep them at least the 16 pixels Fusion means.
+class AndroidStyle : public QProxyStyle
+{
+public:
+  int pixelMetric(PixelMetric metric, const QStyleOption *option, const QWidget *widget) const override
+  {
+    const int value = QProxyStyle::pixelMetric(metric, option, widget);
+    return metric == PM_SmallIconSize ? std::max(value, 16) : value;
+  }
+
+  QSize sizeFromContents(ContentsType type, const QStyleOption *option, const QSize& size,
+                         const QWidget *widget) const override
+  {
+    QSize result = QProxyStyle::sizeFromContents(type, option, size, widget);
+    if (type == CT_MenuItem) {
+      if (auto *item = qstyleoption_cast<const QStyleOptionMenuItem *>(option);
+          item && item->menuItemType != QStyleOptionMenuItem::Separator)
+        result.rwidth() += result.height();
+    }
+    return result;
+  }
+};
+
+// Dialogs sized for a desktop screen (Library Info, About) can be taller than the space above Android's taskbar,
+// which hides their buttons: keep every dialog inside the screen's available area.
+class FitDialogsToScreen : public QObject
+{
+public:
+  using QObject::QObject;
+  bool eventFilter(QObject *watched, QEvent *event) override
+  {
+    if (event->type() == QEvent::Show) {
+      if (auto *dialog = qobject_cast<QDialog *>(watched); dialog && dialog->isWindow() && dialog->screen()) {
+        const QRect available = dialog->screen()->availableGeometry();
+        QRect geometry = dialog->geometry();
+        if (!available.contains(geometry)) {
+          geometry.setSize(geometry.size().boundedTo(available.size()));
+          geometry.moveTop(std::clamp(geometry.top(), available.top(), available.bottom() + 1 - geometry.height()));
+          geometry.moveLeft(std::clamp(geometry.left(), available.left(), available.right() + 1 - geometry.width()));
+          dialog->setGeometry(geometry);
+        }
+      }
+    }
+    return false;
+  }
+};
+
+void installStyle()
+{
+  if (!qobject_cast<QApplication *>(QCoreApplication::instance())) return;
+  QApplication::setStyle(new AndroidStyle);
+  qApp->installEventFilter(new FitDialogsToScreen(qApp));
+}
+Q_COREAPP_STARTUP_FUNCTION(installStyle)
 
 int main(int argc, char **argv)
 {

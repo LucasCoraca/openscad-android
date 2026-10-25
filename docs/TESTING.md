@@ -39,21 +39,21 @@ Emulator: tablet 1600×1000, density 240 (rounded to device pixel ratio 2), x86_
 | ⏳ | Long press: selection menu; double tap: centre | |
 | ✅ | Thrown Together | |
 | ✅ | Render (F6) with Manifold | |
-| ⏳ | View toolbar: all buttons | |
-| ⏳ | Show edges, axes, scale markers, crosshairs | |
+| ✅ | View toolbar: view directions, view all, zoom, reset, perspective/orthogonal | objects vanished after some view changes: Qt changes GL state behind gl4es's caches; gl4es now resyncs at each frame |
+| ✅ | Show edges, axes, scale markers, crosshairs | edges: ViewEdges.frag divided a vec3 by an int (not valid GLSL ES) |
 | ⏳ | Perspective / orthogonal | |
 | ⏳ | Measure, selection | |
 
 ## Menus and dialogs
 | | What | Notes |
 |---|---|---|
-| ✅ | Menu bar, submenus | third-level submenus open only on a second tap |
-| ✅ | Preferences: pages switch, Back closes | font size combo shows -1; sound option has no effect |
-| ✅ | Library Info | OK button partly under the taskbar |
-| ❌ | Help menu item widths | "OpenSCAD Homepage" elided |
-| ⏳ | About, Cheat Sheet, Documentation | |
+| ✅ | Menu bar, submenus | third-level submenus sometimes need a second tap |
+| ✅ | Preferences: pages switch, Back closes | sound option has no effect |
+| ✅ | Library Info | dialogs are now kept inside the space above the taskbar |
+| ✅ | Menu item widths | labels were elided ("Para…tric"): Fusion metrics vs 72-dpi Android; fixed by a proxy style |
+| ✅ | About (scrolls), Cheat Sheet (opens the browser) | |
 | ⏳ | Font List | |
-| ⏳ | Customizer | |
+| ✅ | Customizer: combo, spin box, slider, checkbox, auto preview, presets (+, -, select), detail modes, scrolling | editable preset combo has small rows; Android text handle lingers after the keyboard closes |
 | ⏳ | Animate | |
 | ✅ | Export STL through the system file picker | content:// documents via a local copy |
 | ⏳ | Export: 3MF, OFF, AMF, DXF, SVG, PDF, PNG, CSG | |
@@ -69,5 +69,5 @@ Emulator: tablet 1600×1000, density 240 (rounded to device pixel ratio 2), x86_
 | ✅ | Taps land correctly in dialogs and menus | fixed in the Qt plugin |
 | ✅ | No stale pixels after partial repaints | fixed in the Qt plugin |
 | ⏳ | Rotation / phone layout | |
-| ⏳ | App to background and back | |
+| ✅ | App to background and back | via the browser; preview still renders |
 | ⏳ | Translations | |

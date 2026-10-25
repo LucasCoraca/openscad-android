@@ -116,6 +116,18 @@ index 522d670..da6cdda 100644
 +    add_subdirectory("${OPENSCAD_ANDROID_DIR}/android/app" "${CMAKE_BINARY_DIR}/android-app")
 +  endif()
 +endif()
+diff --git a/shaders/ViewEdges.frag b/shaders/ViewEdges.frag
+index f0f7aad..cd975a3 100644
+--- a/shaders/ViewEdges.frag
++++ b/shaders/ViewEdges.frag
+@@ -19,6 +19,6 @@ float edgeFactor() {
+ }
+ 
+ void main(void) {
+-  vec4 color_edge = vec4((color.rgb + vec3(1))/2, 1.0);
++  vec4 color_edge = vec4((color.rgb + vec3(1.0))/2.0, 1.0);
+   gl_FragColor = mix(color_edge, vec4(color.rgb * shading, color.a), edgeFactor());
+ }
 diff --git a/src/glview/OffscreenContextAndroid.cc b/src/glview/OffscreenContextAndroid.cc
 new file mode 100644
 index 0000000..e0704a8
@@ -679,21 +691,25 @@ index e8ebbfd..288df80 100644
    QNetworkAccessManager nam;
    QNetworkReply *reply = reply_func(nam, request);
 diff --git a/src/gui/Preferences.cc b/src/gui/Preferences.cc
-index da1c5af..2fd6b10 100644
+index da1c5af..adab615 100644
 --- a/src/gui/Preferences.cc
 +++ b/src/gui/Preferences.cc
-@@ -184,14 +184,23 @@ void Preferences::init()
+@@ -183,15 +183,26 @@ void Preferences::init()
+ 
    const QFont applicationFont = QTextDocument().defaultFont();
    this->defaultmap["advanced/applicationFontFamily"] = applicationFont.family();
-   this->defaultmap["advanced/applicationFontSize"] = applicationFont.pointSize();
+-  this->defaultmap["advanced/applicationFontSize"] = applicationFont.pointSize();
 +#ifdef Q_OS_ANDROID
 +  // Android's default font is sized in pixels, so pointSize() is -1, which the console and customizer style sheets
 +  // took as a huge uint size (the console showed only boxes): give them the point size it resolves to
 +  const QString applicationFontFamily = QFontInfo(applicationFont).family();
 +  const int applicationFontSize = QFontInfo(applicationFont).pointSize();
++  // The application font keeps the size Qt picks for -1 (12 pt), which the font size combo showed as -1
++  this->defaultmap["advanced/applicationFontSize"] = 12;
 +#else
 +  const QString applicationFontFamily = applicationFont.family();
 +  const int applicationFontSize = applicationFont.pointSize();
++  this->defaultmap["advanced/applicationFontSize"] = applicationFontSize;
 +#endif
  
    // Leave Console font with default if user has not chosen another.
@@ -1150,9 +1166,3 @@ index 29cab4c..13c5a50 100644
    set_source_files_properties(
      submodules/OpenCSG/src/context.cpp
      PROPERTIES COMPILE_DEFINITIONS "ensureFunctionPointers=ensureFunctionPointers_unused"
-diff --git a/submodules/OpenCSG b/submodules/OpenCSG
---- a/submodules/OpenCSG
-+++ b/submodules/OpenCSG
-@@ -1 +1 @@
--Subproject commit 9bf122715213dca05e70993dd8672fe3aa36c518
-+Subproject commit 9bf122715213dca05e70993dd8672fe3aa36c518-dirty
