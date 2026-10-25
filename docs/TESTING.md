@@ -24,8 +24,8 @@ Emulator: tablet 1600×1000, density 240 (rounded to device pixel ratio 2), x86_
 | ✅ | Window grows back when the keyboard hides | |
 | ✅ | Tap to place cursor (keyboard appears) | |
 | ⏳ | Long-press selection, copy/cut/paste | |
-| ⏳ | Undo / redo, indent, comment, find & replace | |
-| ⏳ | Tabs: several files, close tab | |
+| ✅ | Undo, Edit-menu copy/paste (Android clipboard), Find (highlights, next), Replace | ❌ typing with the keyboard into the Replace field after a selection scrambles letter order ("mbli") |
+| ✅ | Tabs: several files, new file | |
 | ✅ | Finger scrolling (editor, lists, text views) | QScroller on every scroll area; drags no longer select |
 
 ## 3D view
@@ -56,7 +56,7 @@ Emulator: tablet 1600×1000, density 240 (rounded to device pixel ratio 2), x86_
 | ✅ | Customizer: combo, spin box, slider, checkbox, auto preview, presets (+, -, select), detail modes, scrolling | editable preset combo has small rows; Android text handle lingers after the keyboard closes |
 | ✅ | Animate: FPS/steps, play/pause, step, rewind | number fields get the full keyboard |
 | ✅ | Export STL through the system file picker | content:// documents via a local copy |
-| ⏳ | Export: 3MF, OFF, AMF, DXF, SVG, PDF, PNG, CSG | |
+| ✅ | Export: OBJ, 3MF, SVG, DXF, PDF, PNG (via the picker; option dialogs fit the screen) | 3MF (lib3mf) and PDF (cairo) were not built; PDF wrote 0 bytes |
 | ✅ | Save As, Save (writes back to the document), Open (file picker) | |
 | ✅ | Close the last tab | leaves an empty design (closing the window quit the app) |
 | ✅ | Window menu: docks; splitter drag | dock sizes now survive the keyboard; the focused field is scrolled into view |

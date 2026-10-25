@@ -150,6 +150,29 @@ step_libzip() {
     -DENABLE_BZIP2=OFF -DENABLE_LZMA=OFF -DENABLE_ZSTD=OFF -DBUILD_TOOLS=OFF -DBUILD_REGRESS=OFF -DBUILD_OSSFUZZ=OFF \
     -DBUILD_EXAMPLES=OFF -DBUILD_DOC=OFF
 }
+step_pixman() {
+  unpack pixman-0.43.4; meson_cross; rm -rf $B/pixman
+  meson setup $B/pixman $S --cross-file $B/cross.ini --prefix=$P --libdir=lib --buildtype=release --default-library=static \
+    -Dtests=disabled -Ddemos=disabled -Dgtk=disabled -Dlibpng=disabled -Dopenmp=disabled
+  ninja -C $B/pixman -j$JOBS install
+}
+step_cairo() { # PDF export
+  unpack cairo-1.18.2; meson_cross; rm -rf $B/cairo
+  # cairo-ft-private.h uses FT_Color (COLRv1 glyphs) without including its header
+  sed -i 's|#include "cairo-ft.h"|#include "cairo-ft.h"\n#include FT_COLOR_H|' $S/src/cairo-ft-private.h
+  meson setup $B/cairo $S --cross-file $B/cross.ini --prefix=$P --libdir=lib --buildtype=release --default-library=static \
+    -Dfreetype=enabled -Dfontconfig=enabled -Dpng=disabled -Dzlib=enabled -Dxlib=disabled -Dxcb=disabled \
+    -Dquartz=disabled -Dtee=disabled -Dglib=disabled -Dspectre=disabled -Dsymbol-lookup=disabled -Dtests=disabled \
+    -Dgtk_doc=false
+  ninja -C $B/cairo -j$JOBS install
+}
+step_lib3mf() { # 3MF import/export; built static, against our libzip and the system zlib (the tarball has no submodules)
+  unpack lib3mf-2.3.2
+  sed -i 's/add_library(${PROJECT_NAME} SHARED/add_library(${PROJECT_NAME} STATIC/' $S/CMakeLists.txt
+  sed -i 's/target_link_libraries(${PROJECT_NAME} ${LIBZIP_LIBRARIES})/&\n    target_include_directories(${PROJECT_NAME} PRIVATE ${LIBZIP_INCLUDE_DIRS})/' $S/CMakeLists.txt
+  cm $S lib3mf -DUSE_INCLUDED_ZLIB=OFF -DUSE_INCLUDED_LIBZIP=OFF -DUSE_INCLUDED_SSL=OFF -DLIB3MF_TESTS=OFF \
+    -DSTRIP_BINARIES=OFF -DCMAKE_POSITION_INDEPENDENT_CODE=ON
+}
 step_doubleconversion() { unpack double-conversion-3.3.0; cm $S double-conversion -DBUILD_TESTING=OFF; }
 step_utf8proc() { unpack utf8proc-2.9.0; cm $S utf8proc -DUTF8PROC_INSTALL=ON -DUTF8PROC_ENABLE_TESTING=OFF; }
 step_glibshim() { cm $R/deps/glib-shim glib-shim; }
@@ -178,7 +201,7 @@ step_glu() { # GLU (tessellator, gluUnProject) for the CGAL renderer and the vie
   ninja -C $B/glu -j$JOBS install
 }
 
-ALL="qt qtplugin qtsvg gmp mpfr boost eigen cgal tbb zlibpc freetype harfbuzz expat fontconfig libxml2 libzip doubleconversion utf8proc glibshim libintl qscintilla gl4es glu openssl"
+ALL="qt qtplugin qtsvg gmp mpfr boost eigen cgal tbb zlibpc freetype harfbuzz expat fontconfig libxml2 libzip doubleconversion utf8proc glibshim libintl qscintilla gl4es glu openssl pixman cairo lib3mf"
 STEPS=${*:-$ALL}
 for s in $STEPS; do
   if [ $# -eq 0 ] && [ -f $B/$s.done ]; then continue; fi

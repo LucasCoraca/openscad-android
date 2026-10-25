@@ -269,18 +269,32 @@ public:
   bool eventFilter(QObject *watched, QEvent *event) override
   {
     if (event->type() == QEvent::Show) {
-      if (auto *dialog = qobject_cast<QDialog *>(watched); dialog && dialog->isWindow() && dialog->screen()) {
-        const QRect available = dialog->screen()->availableGeometry();
-        QRect geometry = dialog->geometry();
-        if (!available.contains(geometry)) {
-          geometry.setSize(geometry.size().boundedTo(available.size()));
-          geometry.moveTop(std::clamp(geometry.top(), available.top(), available.bottom() + 1 - geometry.height()));
-          geometry.moveLeft(std::clamp(geometry.left(), available.left(), available.right() + 1 - geometry.width()));
-          dialog->setGeometry(geometry);
-        }
+      if (auto *dialog = qobject_cast<QDialog *>(watched); dialog && dialog->isWindow()) {
+        fit(dialog);
+        // the platform window applies the geometry it was created with after this event: fit again afterwards
+        QTimer::singleShot(0, dialog, [dialog] { fit(dialog); });
       }
     }
     return false;
+  }
+
+private:
+  static void fit(QDialog *dialog)
+  {
+    if (!dialog->screen()) return;
+    // the screen's available area still includes the taskbar; the main window is sized to the visible area
+    QRect available = dialog->screen()->availableGeometry();
+    for (QWidget *top : QApplication::topLevelWidgets()) {
+      if (qobject_cast<QMainWindow *>(top) && top->isVisible()) available &= top->geometry();
+    }
+    QRect geometry = dialog->geometry();
+    if (available.isEmpty() || available.contains(geometry)) return;
+    geometry.setSize(geometry.size().boundedTo(available.size()));
+    // a minimum size from the .ui (Export PDF Options: 546 high) would keep it taller; their contents scroll
+    dialog->setMinimumSize(dialog->minimumSize().boundedTo(geometry.size()));
+    geometry.moveTop(std::clamp(geometry.top(), available.top(), available.bottom() + 1 - geometry.height()));
+    geometry.moveLeft(std::clamp(geometry.left(), available.left(), available.right() + 1 - geometry.width()));
+    dialog->setGeometry(geometry);
   }
 };
 

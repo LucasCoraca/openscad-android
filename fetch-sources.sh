@@ -33,6 +33,8 @@ gl4es-1.1.6.tar.gz|https://github.com/ptitSeb/gl4es/archive/refs/tags/v1.1.6.tar
 glu-9.0.3.tar.xz|https://archive.mesa3d.org/glu/glu-9.0.3.tar.xz
 openssl-3.5.4.tar.gz|https://github.com/openssl/openssl/releases/download/openssl-3.5.4/openssl-3.5.4.tar.gz
 lib3mf-2.3.2.tar.gz|https://github.com/3MFConsortium/lib3mf/archive/refs/tags/v2.3.2.tar.gz
+pixman-0.43.4.tar.gz|https://cairographics.org/releases/pixman-0.43.4.tar.gz
+cairo-1.18.2.tar.xz|https://cairographics.org/releases/cairo-1.18.2.tar.xz
 "
 for line in $SOURCES; do
   name=${line%%|*} url=${line#*|}

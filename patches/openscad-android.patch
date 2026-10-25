@@ -1,8 +1,8 @@
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index 522d670..da6cdda 100644
+index 522d670..5f67ce7 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
-@@ -35,6 +35,23 @@ configure_file(
+@@ -35,6 +35,22 @@ configure_file(
    @ONLY
  )
  
@@ -20,13 +20,12 @@ index 522d670..da6cdda 100644
 +  set(USE_CCACHE OFF CACHE BOOL "")
 +  set(ENABLE_SPNAV OFF CACHE STRING "")
 +  set(ENABLE_HIDAPI OFF CACHE STRING "")
-+  set(ENABLE_CAIRO OFF CACHE STRING "")
 +  set(ENABLE_GAMEPAD OFF CACHE STRING "")
 +endif()
  option(INFO "Display build configuration info at end of cmake config" ON)
  option(ENABLE_TESTS "Run testsuite after building." ON)
  option(ENABLE_GUI_TESTS "Compile a special version of the openscad gui with feature for testing." OFF)
-@@ -490,12 +507,26 @@ macro(find_graphics)
+@@ -490,12 +506,26 @@ macro(find_graphics)
        set(GLEW_SOURCES src/glview/glew-utils.cc)
      endif()
  
@@ -53,7 +52,22 @@ index 522d670..da6cdda 100644
    endif()
  endmacro(find_graphics)
  
-@@ -853,7 +884,11 @@ if(NOT HEADLESS)
+@@ -737,6 +767,14 @@ if(ENABLE_CAIRO STREQUAL "AUTO")
+     target_include_directories(OpenSCADLibInternal SYSTEM PUBLIC ${CAIRO_INCLUDE_DIRS})
+     target_link_libraries(OpenSCADLibInternal PUBLIC ${CAIRO_LIBRARIES})
+     target_compile_definitions(OpenSCADLibInternal PUBLIC ENABLE_CAIRO)
++    if(ANDROID)
++      # static cairo: link what it uses (fontconfig, freetype and zlib are linked already)
++      # (FindCairo gives bare library names: add where they are)
++      find_library(PIXMAN_LIBRARY pixman-1 REQUIRED)
++      get_filename_component(PIXMAN_LIBRARY_DIR "${PIXMAN_LIBRARY}" DIRECTORY)
++      target_link_directories(OpenSCADLibInternal PUBLIC "${PIXMAN_LIBRARY_DIR}")
++      target_link_libraries(OpenSCADLibInternal PUBLIC ${PIXMAN_LIBRARY})
++    endif()
+   else()
+     message(STATUS "Cairo: disabled (not found)")
+   endif()
+@@ -853,7 +891,11 @@ if(NOT HEADLESS)
      message(FATAL_ERROR "Qt5Gamepad is not available when using Qt6. Set ENABLE_GAMEPAD to OFF or AUTO.")
    endif()
  
@@ -65,7 +79,7 @@ index 522d670..da6cdda 100644
      message(STATUS "Qt6: ${Qt6_VERSION}")
  
      if (Qt6_POSITION_INDEPENDENT_CODE)
-@@ -978,6 +1013,13 @@ if(APPLE)
+@@ -978,6 +1020,13 @@ if(APPLE)
    endif()
    find_library(COCOA_LIBRARY Cocoa)
    target_link_libraries(OpenSCADLibInternal PUBLIC ${COCOA_LIBRARY})
@@ -79,7 +93,7 @@ index 522d670..da6cdda 100644
  elseif(UNIX)
    target_compile_definitions(OpenSCADLibInternal PUBLIC OPENSCAD_OS="Unix")
    set(PLATFORM_SOURCES src/io/imageutils-lodepng.cc src/platform/PlatformUtils-posix.cc)
-@@ -1385,6 +1427,7 @@ set(GUI_SOURCES
+@@ -1385,6 +1434,7 @@ set(GUI_SOURCES
    src/gui/SettingsWriter.cc
    src/gui/TabManager.cc
    src/gui/UIUtils.cc
@@ -87,7 +101,7 @@ index 522d670..da6cdda 100644
    src/gui/WindowManager.cc
    src/gui/IgnoreWheelWhenNotFocused.cc
    src/gui/input/AxisConfigWidget.cc
-@@ -1685,10 +1728,15 @@ endif()
+@@ -1685,10 +1735,15 @@ endif()
  
  if (USE_QT6)
    if(NOT HEADLESS)
@@ -103,7 +117,7 @@ index 522d670..da6cdda 100644
    endif()
    if(ENABLE_GUI_TESTS)
      target_link_libraries(OpenSCADLibInternal PUBLIC Qt6::Test)
-@@ -1874,3 +1922,12 @@ add_sanitizers(OpenSCADLibInternal)
+@@ -1874,3 +1929,12 @@ add_sanitizers(OpenSCADLibInternal)
  if(INFO)
    include("cmake/Modules/info.cmake")
  endif()
