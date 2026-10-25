@@ -38,5 +38,5 @@ set_target_properties(openscad_android PROPERTIES
   QT_ANDROID_MIN_SDK_VERSION 28
   QT_ANDROID_TARGET_SDK_VERSION 34
   QT_ANDROID_APP_NAME "OpenSCAD"
-  QT_ANDROID_VERSION_NAME "0.1.0-preview"
-  QT_ANDROID_VERSION_CODE 1)  # bump for every release, so Android installs it as an update
+  QT_ANDROID_VERSION_NAME "0.1.1-preview"
+  QT_ANDROID_VERSION_CODE 2)  # bump for every release, so Android installs it as an update
