@@ -4,3 +4,4 @@
 /dist/
 /hosttools/
 /openscad-src/
+__pycache__/
