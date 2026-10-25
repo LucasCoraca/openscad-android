@@ -82,7 +82,7 @@ step_qtplugin() { # Qt's Android platform plugin with our input fix, over the on
   tar xf $R/dl-cache/qtbase-everywhere-src-6.8.3.tar.xz -C $SRC qtbase-everywhere-src-6.8.3/src/plugins/platforms/android \
     qtbase-everywhere-src-6.8.3/src/3rdparty/android
   S=$SRC/qtbase-everywhere-src-6.8.3
-  patch -d $S -p1 < $R/patches/qtbase-android-input.patch
+  patch -d $S -p1 < $R/patches/qtbase-android.patch
   rm -rf $B/qtplugin
   cmake -S $R/deps/qt-android-plugin -B $B/qtplugin "${CMAKE_QT[@]}" -DQTBASE_SRC=$S && cmake --build $B/qtplugin -j$JOBS
   cp $B/qtplugin/libplugins_platforms_qtforandroid_$ABI.so $QT/plugins/platforms/

@@ -270,6 +270,33 @@ index 0000000..ec6848e
 +Proc getProcAddress(const char *name);
 +
 +}  // namespace gl4es_android
+diff --git a/src/glview/opencsg_init.cpp b/src/glview/opencsg_init.cpp
+index b02f348..2a2725f 100644
+--- a/src/glview/opencsg_init.cpp
++++ b/src/glview/opencsg_init.cpp
+@@ -6,6 +6,10 @@
+ // TODO: Replace once OpenCSG upstream provides an official OpenGL proc-address injection API.
+ #include "openglExt.h"
+ 
++#ifdef __ANDROID__
++// desktop GL comes from gl4es (see glview/gl4es-android.cc); OpenCSG's GLAD would try to dlopen libGL
++extern "C" void *gl4es_GetProcAddress(const char *name);
++#endif
+ #ifdef ENABLE_OSMESA
+ extern "C" void *OSMesaGetCurrentContext(void);
+ extern "C" void (*OSMesaGetProcAddress(const char *funcName))(void);
+@@ -25,7 +29,11 @@ void ensureFunctionPointers()
+     return;
+   }
+ #endif
++#ifdef __ANDROID__
++  gladLoadGL(reinterpret_cast<GLADloadfunc>(gl4es_GetProcAddress));
++#else
+   initExtensionLibrary();
++#endif
+   sHaveOpenGLFunctions = true;
+ }
+ 
 diff --git a/src/gui/LibraryInfoDialog.cc b/src/gui/LibraryInfoDialog.cc
 index 4b3cffc..c876c7f 100644
 --- a/src/gui/LibraryInfoDialog.cc
@@ -384,6 +411,38 @@ index e8ebbfd..288df80 100644
  
    QNetworkAccessManager nam;
    QNetworkReply *reply = reply_func(nam, request);
+diff --git a/src/gui/Preferences.cc b/src/gui/Preferences.cc
+index da1c5af..2fd6b10 100644
+--- a/src/gui/Preferences.cc
++++ b/src/gui/Preferences.cc
+@@ -184,14 +184,23 @@ void Preferences::init()
+   const QFont applicationFont = QTextDocument().defaultFont();
+   this->defaultmap["advanced/applicationFontFamily"] = applicationFont.family();
+   this->defaultmap["advanced/applicationFontSize"] = applicationFont.pointSize();
++#ifdef Q_OS_ANDROID
++  // Android's default font is sized in pixels, so pointSize() is -1, which the console and customizer style sheets
++  // took as a huge uint size (the console showed only boxes): give them the point size it resolves to
++  const QString applicationFontFamily = QFontInfo(applicationFont).family();
++  const int applicationFontSize = QFontInfo(applicationFont).pointSize();
++#else
++  const QString applicationFontFamily = applicationFont.family();
++  const int applicationFontSize = applicationFont.pointSize();
++#endif
+ 
+   // Leave Console font with default if user has not chosen another.
+-  this->defaultmap["advanced/consoleFontFamily"] = applicationFont.family();
+-  this->defaultmap["advanced/consoleFontSize"] = applicationFont.pointSize();
++  this->defaultmap["advanced/consoleFontFamily"] = applicationFontFamily;
++  this->defaultmap["advanced/consoleFontSize"] = applicationFontSize;
+ 
+   // Leave Customizer font with default if user has not chosen another.
+-  this->defaultmap["advanced/customizerFontFamily"] = applicationFont.family();
+-  this->defaultmap["advanced/customizerFontSize"] = applicationFont.pointSize();
++  this->defaultmap["advanced/customizerFontFamily"] = applicationFontFamily;
++  this->defaultmap["advanced/customizerFontSize"] = applicationFontSize;
+ 
+ #ifdef Q_OS_MACOS
+   this->defaultmap["editor/ctrlmousewheelzoom"] = false;
 diff --git a/src/gui/QGLView.cc b/src/gui/QGLView.cc
 index f41d62d..b79907b 100644
 --- a/src/gui/QGLView.cc
@@ -465,7 +524,7 @@ index 494c026..15a7bc5 100644
      weakly_canonical(boost::dll::program_location()).parent_path().generic_string();
  #else
 diff --git a/src/openscad_gui.cc b/src/openscad_gui.cc
-index 9a7097c..4656169 100644
+index 9a7097c..d133441 100644
 --- a/src/openscad_gui.cc
 +++ b/src/openscad_gui.cc
 @@ -113,7 +113,14 @@ bool isDarkMode()
@@ -484,3 +543,42 @@ index 9a7097c..4656169 100644
    // OpenSCAD still relies on legacy OpenGL compatibility features and GLSL 1.20
    // shaders, so a GLES context is not currently usable. On Wayland/EGL setups Qt
    // can otherwise pick OpenGL ES by default.
+@@ -204,6 +211,10 @@ int gui(std::vector<std::string>& inputFiles, const std::filesystem::path& origi
+         char **argv, const std::string& gui_test, const bool reset_window_settings)
+ {
+   configureOpenGLContext();
++#ifdef Q_OS_ANDROID
++  // keep OpenSCAD's menu bar in the window: Qt would move it into Android's options menu, which has no button to open it
++  QCoreApplication::setAttribute(Qt::AA_DontUseNativeMenuBar);
++#endif
+   OpenSCADApp app(argc, argv);
+   setGlobalTheme();
+ 
+diff --git a/submodules/CMakeLists-OpenCSG.txt b/submodules/CMakeLists-OpenCSG.txt
+index 29cab4c..13c5a50 100644
+--- a/submodules/CMakeLists-OpenCSG.txt
++++ b/submodules/CMakeLists-OpenCSG.txt
+@@ -17,7 +17,7 @@ set(OPENCSG_SOURCES
+   submodules/OpenCSG/src/glad/src/gl.cpp
+ )
+ 
+-if(ENABLE_OSMESA)
++if(ENABLE_OSMESA OR ANDROID)
+   list(APPEND OPENCSG_SOURCES src/glview/opencsg_init.cpp)
+ endif()
+ 
+@@ -28,10 +28,12 @@ target_include_directories(OpenCSGObjects PRIVATE
+   submodules/OpenCSG/src
+   submodules/OpenCSG/include
+ )
+-if(ENABLE_OSMESA)
++if(ENABLE_OSMESA OR ANDROID)
+   # Temporary workaround: substitute ensureFunctionPointers to load via OSMesaGetProcAddress.
+   # TODO: Remove once upstream OpenCSG provides an official proc-address loader API.
+-  target_compile_definitions(OpenCSGObjects PRIVATE ENABLE_OSMESA)
++  if(ENABLE_OSMESA)
++    target_compile_definitions(OpenCSGObjects PRIVATE ENABLE_OSMESA)
++  endif()
+   set_source_files_properties(
+     submodules/OpenCSG/src/context.cpp
+     PROPERTIES COMPILE_DEFINITIONS "ensureFunctionPointers=ensureFunctionPointers_unused"

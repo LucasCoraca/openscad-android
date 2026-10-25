@@ -1,5 +1,5 @@
 # Qt's Android platform plugin (qtbase src/plugins/platforms/android), rebuilt alone against the installed Qt so it can
-# carry our fix (patches/qtbase-android-input.patch). Configure with -DQTBASE_SRC=<qtbase-everywhere-src-6.8.3> and the
+# carry our fix (patches/qtbase-android.patch). Configure with -DQTBASE_SRC=<qtbase-everywhere-src-6.8.3> and the
 # Qt for Android toolchain; it installs over plugins/platforms/libplugins_platforms_qtforandroid_<abi>.so.
 cmake_minimum_required(VERSION 3.16)
 project(qtforandroid CXX)

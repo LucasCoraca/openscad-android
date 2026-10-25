@@ -128,6 +128,10 @@ void bootstrap()
   const std::string country = locale.callObjectMethod("getCountry", "()Ljava/lang/String;").toString().toStdString();
   if (!lang.empty()) setenv("LANG", (lang + (country.empty() ? "" : "_" + country) + ".UTF-8").c_str(), 1);
 
+  // Qt's widget backing store leaves stale pixels after partial repaints at fractional device pixel ratios (common on
+  // phones: 2.625, 2.75, ...): use the nearest whole ratio
+  setenv("QT_SCALE_FACTOR_ROUNDING_POLICY", "Round", 0);
+
   setenv("OPENSCAD_APP_PATH", (root / "bin").c_str(), 1);
   // development hook: KEY=VALUE lines (e.g. QT_LOGGING_RULES) in openscad-env in the app's external files folder,
   // /sdcard/Android/data/<package>/files, which `adb push` can write
